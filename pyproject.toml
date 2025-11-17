@@ -1,0 +1,49 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "smtpbench"
+version = "1.0.0"
+description = "A robust SMTP load testing and benchmarking tool with MX failover and detailed logging"
+readme = "README.md"
+requires-python = ">=3.8"
+license = {text = "MIT"}
+authors = [
+    {name = "Randall Morse", email = "rmorse@lets.qa"}
+]
+maintainers = [
+    {name = "Randall Morse", email = "rmorse@lets.qa"}
+]
+keywords = ["smtp", "email", "load-testing", "testing", "performance", "benchmark", "benchmarking"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Intended Audience :: System Administrators",
+    "Topic :: Communications :: Email",
+    "Topic :: Software Development :: Testing",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+]
+dependencies = [
+    "dnspython>=2.0.0",
+    "tqdm>=4.0.0",
+    "colorama>=0.4.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/SMTPBench/SMTPBench"
+Documentation = "https://github.com/SMTPBench/SMTPBench#readme"
+Repository = "https://github.com/SMTPBench/SMTPBench"
+Issues = "https://github.com/SMTPBench/SMTPBench/issues"
+
+[project.scripts]
+smtpbench = "smtpbench.cli:main"
+
+[tool.setuptools]
+packages = ["smtpbench"]

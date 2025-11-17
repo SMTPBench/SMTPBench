@@ -1,0 +1,26 @@
+
+# Python packaging
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# PyPI
+.pypirc
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+
+# macOS system files
+.DS_Store
+
+# Log directory
+log/
+
+# Additional pytest related
+.pytest_cache/
+*.log
+*.tmp
+*.pytest_* 
