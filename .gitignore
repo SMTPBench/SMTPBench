@@ -24,3 +24,6 @@ log/
 *.log
 *.tmp
 *.pytest_* 
+
+# Ignore root notes folder
+notes/
