@@ -27,3 +27,27 @@ log/
 
 # Ignore root notes folder
 notes/
+
+# Ignore Python virtual environment
+.venv/
+
+# Ignore Python cache and compiled files
+__pycache__/
+**/__pycache__/
+*.py[cod]
+*$py.class
+
+# Ignore Jupyter Notebook checkpoints
+.ipynb_checkpoints/
+
+# Ignore VS Code settings
+.vscode/
+
+# Ignore mypy and coverage reports
+.mypy_cache/
+.coverage
+coverage.xml
+.hypothesis/
+
+# Ignore pip wheel files
+*.whl
