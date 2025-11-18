@@ -126,7 +126,7 @@ def parse_args():
         sys.exit(0)
     
     # Check for help flags
-    if len(sys.argv) == 1 or any(arg.lower() in ['-h', '--help', 'help', '?', '-?', '--h'] for arg in sys.argv[1:]):
+    if len(sys.argv) == 1 or any(arg.lower() in ['-h', '--help', 'help', '?'] for arg in sys.argv[1:]):
         show_help()
     
     args = {}
