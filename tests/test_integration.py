@@ -9,6 +9,28 @@ import time
 import shutil
 
 
+def fix_mbox_permissions(mbox_path='test-mail/root'):
+    """Fix permissions on mbox file created by Docker"""
+    if not os.path.exists(mbox_path) or os.path.getsize(mbox_path) == 0:
+        return
+    
+    # Try docker exec first (if mail server container is running)
+    result = subprocess.run(
+        ['docker', 'compose', '-f', 'docker-compose.test.yml', 'exec', '-T', 'mail-server', 
+         'chmod', '644', '/var/mail/root'],
+        capture_output=True
+    )
+    
+    # If docker exec didn't work, file should already be readable via the volume mount
+    # Just verify we can read it
+    try:
+        with open(mbox_path, 'r') as f:
+            f.read(1)
+    except PermissionError:
+        # Last resort: try chmod without sudo (will fail in CI but documents the issue)
+        subprocess.run(['chmod', '644', mbox_path], check=False, capture_output=True)
+
+
 @pytest.fixture(scope="module")
 def docker_compose_setup():
     """Set up and tear down Docker Compose services for integration tests"""
@@ -29,6 +51,9 @@ def docker_compose_setup():
     time.sleep(5)
     
     yield
+    
+    # Fix permissions before cleanup so artifacts can be uploaded
+    fix_mbox_permissions()
     
     # Cleanup
     subprocess.run(
@@ -59,9 +84,8 @@ def test_smtpbench_sends_emails(docker_compose_setup):
     mbox_path = 'test-mail/root'
     assert os.path.exists(mbox_path), f"mbox file not found at {mbox_path}"
     
-    # Fix permissions on mbox file (Docker creates it with restrictive perms)
-    if os.path.getsize(mbox_path) > 0:
-        subprocess.run(['chmod', '644', mbox_path], check=False)
+    # Fix permissions on mbox file
+    fix_mbox_permissions(mbox_path)
     
     # Parse mbox file
     mbox = mailbox.mbox(mbox_path)
@@ -115,9 +139,8 @@ def test_smtpbench_message_format(docker_compose_setup):
     time.sleep(5)
     
     mbox_path = 'test-mail/root'
-    # Fix permissions on mbox file (Docker creates it with restrictive perms)
-    if os.path.exists(mbox_path) and os.path.getsize(mbox_path) > 0:
-        subprocess.run(['chmod', '644', mbox_path], check=False)
+    # Fix permissions on mbox file
+    fix_mbox_permissions(mbox_path)
     mbox = mailbox.mbox(mbox_path)
     
     # Check first message format
