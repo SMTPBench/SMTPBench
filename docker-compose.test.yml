@@ -11,7 +11,6 @@ services:
     command: >
       bash -c "
       postconf -e 'mydestination = localhost, local.ingest.lets.qa, \$$myhostname' &&
-      postconf -e 'mailbox_command = /usr/bin/tee -a /var/mail/root' &&
       postfix start-fg
       "
 
