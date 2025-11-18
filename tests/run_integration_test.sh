@@ -13,7 +13,7 @@ mkdir -p test-mail logs
 
 # Start services
 echo "Starting mail server and SMTPBench..."
-docker-compose -f docker-compose.test.yml up --build -d mail-server
+docker compose -f docker-compose.test.yml up --build -d mail-server
 
 # Wait for mail server to be ready
 echo "Waiting for mail server to be ready..."
@@ -21,7 +21,7 @@ sleep 5
 
 # Run SMTPBench
 echo "Running SMTPBench load test..."
-docker-compose -f docker-compose.test.yml up --build smtpbench
+docker compose -f docker-compose.test.yml up --build smtpbench
 
 # Wait a bit for messages to be processed
 echo "Waiting for messages to be processed..."
@@ -29,7 +29,7 @@ sleep 5
 
 # Run validation
 echo "Running validation..."
-docker-compose -f docker-compose.test.yml up --build validator
+docker compose -f docker-compose.test.yml up --build validator
 VALIDATOR_EXIT_CODE=$?
 
 # If validator container failed, get the actual exit code
@@ -51,12 +51,12 @@ fi
 # Show SMTPBench logs
 echo ""
 echo "SMTPBench logs:"
-docker-compose -f docker-compose.test.yml logs smtpbench | tail -n 20
+docker compose -f docker-compose.test.yml logs smtpbench | tail -n 20
 
 # Cleanup
 echo ""
 echo "Cleaning up containers..."
-docker-compose -f docker-compose.test.yml down
+docker compose -f docker-compose.test.yml down
 
 # Show final results
 echo ""

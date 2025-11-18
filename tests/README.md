@@ -23,19 +23,19 @@ You can also run the services manually:
 
 ```bash
 # Start the mail server
-docker-compose -f docker-compose.test.yml up -d mail-server
+docker compose -f docker-compose.test.yml up -d mail-server
 
 # Wait a few seconds for it to be ready
 sleep 5
 
 # Run SMTPBench
-docker-compose -f docker-compose.test.yml up smtpbench
+docker compose -f docker-compose.test.yml up smtpbench
 
 # Validate results
-docker-compose -f docker-compose.test.yml up validator
+docker compose -f docker-compose.test.yml up validator
 
 # Cleanup
-docker-compose -f docker-compose.test.yml down
+docker compose -f docker-compose.test.yml down
 ```
 
 ### Custom Test Parameters
@@ -112,19 +112,19 @@ for i, msg in enumerate(mbox):
 
 Check Docker logs:
 ```bash
-docker-compose -f docker-compose.test.yml logs mail-server
+docker compose -f docker-compose.test.yml logs mail-server
 ```
 
 ### No messages received
 
 1. Check if SMTPBench connected successfully:
 ```bash
-docker-compose -f docker-compose.test.yml logs smtpbench
+docker compose -f docker-compose.test.yml logs smtpbench
 ```
 
 2. Verify network connectivity:
 ```bash
-docker-compose -f docker-compose.test.yml exec smtpbench ping mail-server
+docker compose -f docker-compose.test.yml exec smtpbench ping mail-server
 ```
 
 ### Validation fails

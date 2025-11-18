@@ -20,7 +20,7 @@ def docker_compose_setup():
     
     # Start mail server
     subprocess.run(
-        ['docker-compose', '-f', 'docker-compose.test.yml', 'up', '-d', 'mail-server'],
+        ['docker', 'compose', '-f', 'docker-compose.test.yml', 'up', '-d', 'mail-server'],
         check=True,
         capture_output=True
     )
@@ -32,7 +32,7 @@ def docker_compose_setup():
     
     # Cleanup
     subprocess.run(
-        ['docker-compose', '-f', 'docker-compose.test.yml', 'down'],
+        ['docker', 'compose', '-f', 'docker-compose.test.yml', 'down'],
         check=False,
         capture_output=True
     )
@@ -44,7 +44,7 @@ def test_smtpbench_sends_emails(docker_compose_setup):
     
     # Run SMTPBench
     result = subprocess.run(
-        ['docker-compose', '-f', 'docker-compose.test.yml', 'up', '--build', 'smtpbench'],
+        ['docker', 'compose', '-f', 'docker-compose.test.yml', 'up', '--build', 'smtpbench'],
         capture_output=True,
         text=True
     )
@@ -104,7 +104,7 @@ def test_smtpbench_message_format(docker_compose_setup):
     
     # Run SMTPBench with minimal messages
     subprocess.run(
-        ['docker-compose', '-f', 'docker-compose.test.yml', 'up', '--build', 'smtpbench'],
+        ['docker', 'compose', '-f', 'docker-compose.test.yml', 'up', '--build', 'smtpbench'],
         capture_output=True
     )
     
@@ -152,7 +152,7 @@ def test_smtpbench_logs_created(docker_compose_setup):
     
     # Run SMTPBench
     subprocess.run(
-        ['docker-compose', '-f', 'docker-compose.test.yml', 'up', '--build', 'smtpbench'],
+        ['docker', 'compose', '-f', 'docker-compose.test.yml', 'up', '--build', 'smtpbench'],
         capture_output=True
     )
     
