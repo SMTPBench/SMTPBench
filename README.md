@@ -44,6 +44,18 @@ A robust SMTP load testing and benchmarking tool with MX failover support and de
 pip install smtpbench
 ```
 
+### Upgrade to Latest Version
+
+```bash
+pip install --upgrade smtpbench
+```
+
+Or specify a version:
+
+```bash
+pip install smtpbench==1.1.0
+```
+
 ### From Source
 
 ```bash
