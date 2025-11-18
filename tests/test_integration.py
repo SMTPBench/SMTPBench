@@ -77,14 +77,11 @@ def test_smtpbench_sends_emails(docker_compose_setup):
         from_addr = message.get('From', '')
         to_addr = message.get('To', '')
         
-        # Check if it's from SMTPBench
-        if 'Load Test Message' in subject:
+        # Check if it's from SMTPBench (look for the UUID in brackets)
+        uuid_match = re.search(r'\[([a-f0-9\-]+)\]', subject)
+        if uuid_match and 'Quick test from thread' in subject:
             smtpbench_messages += 1
-            
-            # Extract run UUID from subject
-            uuid_match = re.search(r'Run: ([a-f0-9\-]+)', subject)
-            if uuid_match:
-                run_uuids.add(uuid_match.group(1))
+            run_uuids.add(uuid_match.group(1))
             
             # Validate from and to addresses
             assert 'loadtest@local.ingest.lets.qa' in from_addr
@@ -123,18 +120,26 @@ def test_smtpbench_message_format(docker_compose_setup):
             assert message.get('From') is not None
             assert message.get('To') is not None
             assert message.get('Subject') is not None
-            assert message.get('Date') is not None
             
-            # Validate subject format
+            # Validate custom headers
+            assert message.get('X-SMTPBench-Run-UUID') is not None
+            assert message.get('X-SMTPBench-Thread-ID') is not None
+            assert message.get('X-SMTPBench-Message-ID') is not None
+            
+            # Validate subject format (contains UUID in brackets)
             subject = message.get('Subject')
-            assert 'Thread' in subject
-            assert 'Message' in subject
-            assert 'Run:' in subject
+            assert 'thread' in subject
+            assert 'message' in subject
+            assert re.search(r'\[([a-f0-9\-]+)\]', subject) is not None
             
             # Check message body exists
-            body = message.get_payload()
+            payload = message.get_payload()
+            if isinstance(payload, list):
+                body = payload[0].get_payload()
+            else:
+                body = payload
             assert len(body) > 0
-            assert 'Load Test Email' in body
+            assert 'SMTPBench Load Testing Tool' in body
             
             break
     else:

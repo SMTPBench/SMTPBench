@@ -13,6 +13,7 @@ import os
 import traceback
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
+from email.utils import formatdate
 from tqdm import tqdm
 from datetime import datetime
 from colorama import Fore, Style, init as colorama_init
@@ -251,6 +252,7 @@ def send_email(port, recipient, from_address, thread_id, message_id, retry_delay
     msg['From'] = from_address
     msg['To'] = recipient
     msg['Subject'] = subject
+    msg['Date'] = formatdate(localtime=True)
     msg['X-SMTPBench-Run-UUID'] = run_uuid
     msg['X-SMTPBench-Thread-ID'] = str(thread_id)
     msg['X-SMTPBench-Message-ID'] = str(message_id)
