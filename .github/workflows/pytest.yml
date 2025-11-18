@@ -5,7 +5,7 @@ on:
     branches: [ main ]
 
 jobs:
-  test:
+  unit-tests:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -18,5 +18,39 @@ jobs:
           python -m pip install --upgrade pip
           pip install .
           pip install pytest
-      - name: Run pytest
-        run: pytest
+      - name: Run unit tests
+        run: pytest -v -m "not integration"
+
+  integration-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install .
+          pip install pytest
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      - name: Pull mail server image
+        run: docker pull ghcr.io/lets-qa/local-test-mail-server:main
+      - name: Run integration tests
+        run: pytest -v -m "integration" --tb=short
+      - name: Fix permissions for artifact upload
+        if: always()
+        run: |
+          sudo chmod -R 755 test-mail/ logs/ 2>/dev/null || true
+          sudo chmod 644 test-mail/root 2>/dev/null || true
+      - name: Upload logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-logs
+          path: |
+            logs/
+            test-mail/
+          retention-days: 7

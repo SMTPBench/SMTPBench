@@ -51,3 +51,6 @@ coverage.xml
 
 # Ignore pip wheel files
 *.whl
+
+# Ignore test-mail files or folders
+test-mail

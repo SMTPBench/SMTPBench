@@ -51,8 +51,18 @@ pip install -e .
 ### Using Docker
 
 ```bash
+# Build the image
 docker build -t smtpbench .
+
+# Run with log volume mount
 docker run --rm -v $(pwd)/logs:/app/logs smtpbench \
+    recipient=test@local.lets.qa \
+    port=587 \
+    threads=5 \
+    messages=10
+
+# Or run without volume mount (logs stay in container)
+docker run --rm smtpbench \
     recipient=test@local.lets.qa \
     port=587 \
     threads=5 \
@@ -60,6 +70,22 @@ docker run --rm -v $(pwd)/logs:/app/logs smtpbench \
 ```
 
 ## Quick Start
+
+### Getting Help
+
+```bash
+# Show version
+smtpbench --version
+smtpbench -v
+
+# Show full help with all options
+smtpbench --help
+
+# Also works with
+smtpbench -h
+smtpbench help
+smtpbench ?
+```
 
 ### Basic Usage
 
@@ -101,6 +127,11 @@ python -m smtpbench recipient=test@local.lets.qa port=587 threads=5 messages=10
 
 ## Configuration Options
 
+For a complete, formatted list of all options with examples, run:
+```bash
+smtpbench --help
+```
+
 ### Required Parameters
 
 | Parameter | Description | Example |
@@ -109,6 +140,8 @@ python -m smtpbench recipient=test@local.lets.qa port=587 threads=5 messages=10
 | `port` | SMTP port number | `587` or `25` |
 | `threads` | Number of concurrent threads | `10` |
 | `messages` | Messages per thread (0 for infinite) | `100` |
+
+> **Note:** If any required parameter is missing, SMTPBench will display a helpful error message with examples.
 
 ### Optional Parameters
 
@@ -158,6 +191,90 @@ SMTPBench creates structured JSON logs in the specified log directory:
 }
 ```
 
+### Email Message Format
+
+Each email sent by SMTPBench includes tracking headers and identifiers for correlation:
+
+```
+From: loadtest@local.lets.qa
+To: test@local.lets.qa
+Subject: Quick test from thread 3 message 7 [a1b2c3d4-e5f6-7890-abcd-ef1234567890]
+X-SMTPBench-Run-UUID: a1b2c3d4-e5f6-7890-abcd-ef1234567890
+X-SMTPBench-Thread-ID: 3
+X-SMTPBench-Message-ID: 7
+Content-Type: multipart/mixed; boundary="===============1234567890=="
+MIME-Version: 1.0
+
+--===============1234567890==
+Content-Type: text/plain; charset="us-ascii"
+MIME-Version: 1.0
+Content-Transfer-Encoding: 7bit
+
+Quick test from thread 3 message 7 [a1b2c3d4-e5f6-7890-abcd-ef1234567890]
+
+--
+SMTPBench Load Testing Tool
+https://github.com/SMTPBench/SMTPBench
+--===============1234567890==--
+```
+
+**Key Fields That Change Per Message:**
+- `Subject` - Contains thread ID, message ID, and run UUID
+- `X-SMTPBench-Thread-ID` - Identifies which thread sent the message (1 to N threads)
+- `X-SMTPBench-Message-ID` - Message number within that thread (1 to N messages)
+
+**Key Fields That Stay Constant Per Run:**
+- `X-SMTPBench-Run-UUID` - Unique identifier for the entire test run
+- `From` - Sender address (unless changed)
+- `To` - Recipient address (unless changed)
+
+**Example: Messages from the Same Run**
+
+Thread 1, Message 1:
+```
+Subject: Quick test from thread 1 message 1 [a1b2c3d4-e5f6-7890-abcd-ef1234567890]
+X-SMTPBench-Run-UUID: a1b2c3d4-e5f6-7890-abcd-ef1234567890
+X-SMTPBench-Thread-ID: 1
+X-SMTPBench-Message-ID: 1
+```
+
+Thread 1, Message 2:
+```
+Subject: Quick test from thread 1 message 2 [a1b2c3d4-e5f6-7890-abcd-ef1234567890]
+X-SMTPBench-Run-UUID: a1b2c3d4-e5f6-7890-abcd-ef1234567890  ← Same run UUID
+X-SMTPBench-Thread-ID: 1                                      ← Same thread
+X-SMTPBench-Message-ID: 2                                     ← Different message
+```
+
+Thread 3, Message 7:
+```
+Subject: Quick test from thread 3 message 7 [a1b2c3d4-e5f6-7890-abcd-ef1234567890]
+X-SMTPBench-Run-UUID: a1b2c3d4-e5f6-7890-abcd-ef1234567890  ← Same run UUID
+X-SMTPBench-Thread-ID: 3                                      ← Different thread
+X-SMTPBench-Message-ID: 7                                     ← Different message
+```
+
+**Example: Messages from Different Runs**
+
+First run:
+```
+Subject: Quick test from thread 1 message 1 [a1b2c3d4-e5f6-7890-abcd-ef1234567890]
+X-SMTPBench-Run-UUID: a1b2c3d4-e5f6-7890-abcd-ef1234567890
+```
+
+Second run (different UUID):
+```
+Subject: Quick test from thread 1 message 1 [f9e8d7c6-b5a4-3210-fedc-ba9876543210]
+X-SMTPBench-Run-UUID: f9e8d7c6-b5a4-3210-fedc-ba9876543210  ← Different run
+```
+
+**Use Cases for Headers:**
+- **Tracking**: Follow individual messages across distributed mail systems
+- **Correlation**: Match emails with JSON log entries via run UUID
+- **Testing**: Validate message delivery and filter test data
+- **Debugging**: Identify which test run generated specific emails
+- **Analysis**: Aggregate metrics by run UUID or thread ID
+
 ### Terminal Output
 
 SMTPBench displays real-time progress with color-coded success rates:
@@ -183,7 +300,7 @@ Elapsed Time: 135.42 seconds
 Logs saved in: /path/to/logs
 ```
 
-## Use Cases
+## Use Cases (adjust samples for your needs)
 
 ### Load Testing
 Test SMTP server capacity and performance under concurrent load:
@@ -268,15 +385,80 @@ smtpbench \
 git clone https://github.com/SMTPBench/SMTPBench.git
 cd SMTPBench
 pip install -e .
+pip install pytest
 ```
 
-### Run Tests
+### Running Tests
+
+SMTPBench includes both unit tests and integration tests.
+
+#### Unit Tests
+
+Run the unit test suite:
+```bash
+pytest -v -m "not integration"
+```
+
+#### Integration Tests
+
+Integration tests use Docker Compose to spin up a real SMTP server and validate end-to-end functionality:
 
 ```bash
-pytest tests/
+# Run integration tests (requires Docker)
+pytest -v -m "integration"
+
+# Or use the shell script
+./tests/run_integration_test.sh
 ```
 
+The integration tests:
+- Start a local test mail server using [local-test-mail-server](https://github.com/lets-qa/local-test-mail-server)
+- Run SMTPBench to send emails
+- Validate emails are received in the mbox file
+- Verify log files are created correctly
+- Check message format and content
+
+#### Run All Tests
+
+```bash
+pytest -v
+```
+
+### CI/CD
+
+Tests run automatically on pull requests via GitHub Actions:
+- **Unit tests** - Fast tests without external dependencies
+- **Integration tests** - Full end-to-end tests with Docker Compose
+
+See `.github/workflows/pytest.yml` for details.
+
 ## Troubleshooting
+
+### Getting Help
+
+If you're unsure about available options or syntax:
+```bash
+smtpbench --help  # Display full help with all options and examples
+```
+
+### Invalid Arguments
+
+If you see an error like `Invalid argument format`, ensure you're using the `key=value` format:
+```bash
+# ✗ Wrong
+smtpbench --recipient test@example.com
+
+# ✓ Correct
+smtpbench recipient=test@example.com port=587 threads=5 messages=10
+```
+
+### Missing Required Parameters
+
+If parameters are missing, SMTPBench will show which ones are required:
+```bash
+$ smtpbench recipient=test@example.com
+✗ Missing required parameter(s): port, threads, messages
+```
 
 ### Connection Timeouts
 
