@@ -59,6 +59,10 @@ def test_smtpbench_sends_emails(docker_compose_setup):
     mbox_path = 'test-mail/root'
     assert os.path.exists(mbox_path), f"mbox file not found at {mbox_path}"
     
+    # Fix permissions on mbox file (Docker creates it with restrictive perms)
+    if os.path.getsize(mbox_path) > 0:
+        subprocess.run(['chmod', '644', mbox_path], check=False)
+    
     # Parse mbox file
     mbox = mailbox.mbox(mbox_path)
     message_count = len(mbox)
@@ -111,6 +115,9 @@ def test_smtpbench_message_format(docker_compose_setup):
     time.sleep(5)
     
     mbox_path = 'test-mail/root'
+    # Fix permissions on mbox file (Docker creates it with restrictive perms)
+    if os.path.exists(mbox_path) and os.path.getsize(mbox_path) > 0:
+        subprocess.run(['chmod', '644', mbox_path], check=False)
     mbox = mailbox.mbox(mbox_path)
     
     # Check first message format
