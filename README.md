@@ -1,10 +1,14 @@
 # SMTPBench
 
 [![PyPI version](https://badge.fury.io/py/smtpbench.svg)](https://badge.fury.io/py/smtpbench)
+[![PyPI - Downloads](https://img.shields.io/pypi/dm/smtpbench)](https://pypi.org/project/smtpbench/)
 [![Python Versions](https://img.shields.io/pypi/pyversions/smtpbench.svg)](https://pypi.org/project/smtpbench/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Tests](https://github.com/SMTPBench/SMTPBench/actions/workflows/pytest.yml/badge.svg)](https://github.com/SMTPBench/SMTPBench/actions/workflows/pytest.yml)
 
 A robust SMTP load testing and benchmarking tool with MX failover support and detailed logging capabilities.
+
+**📦 [Available on PyPI](https://pypi.org/project/smtpbench/)** • **🚀 [Quick Start Guide](LOCAL_TESTING.md)** • **📖 [Documentation](https://github.com/SMTPBench/SMTPBench)**
 
 ## ⚠️ Important Notice
 
