@@ -124,7 +124,7 @@ def validate_mbox(mbox_path="/var/mail/root", expected_messages=10, run_uuid=Non
 
 
 if __name__ == "__main__":
-    # Default to 10 messages, but can be overridden via environment variable
+    # Default to 50 messages, but can be overridden via environment variable
     expected = int(os.environ.get('EXPECTED_MESSAGES', '50'))
     mbox_path = os.environ.get('MBOX_PATH', '/var/mail/root')
     
