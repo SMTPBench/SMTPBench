@@ -1,0 +1,58 @@
+services:
+  mail-server:
+    image: ghcr.io/lets-qa/local-test-mail-server:main
+    container_name: test-mail-server
+    ports:
+      - "25:25"
+    volumes:
+      - ./test-mail:/var/mail
+    networks:
+      - test-network
+    command: >
+      bash -c "
+      postconf -e 'mydestination = localhost, local.ingest.lets.qa, \$$myhostname' &&
+      postfix start-fg
+      "
+
+  smtpbench:
+    build:
+      context: .
+      dockerfile: dockerfile
+    container_name: smtpbench-test
+    depends_on:
+      - mail-server
+    volumes:
+      - ./logs:/app/logs
+    networks:
+      - test-network
+    command: >
+      recipient=test@local.ingest.lets.qa
+      lb_host=mail-server
+      port=25
+      from_address=loadtest@local.ingest.lets.qa
+      threads=5
+      messages=10
+      use_tls=false
+
+  validator:
+    image: python:3.11-slim
+    container_name: test-validator
+    depends_on:
+      - smtpbench
+    volumes:
+      - ./test-mail:/var/mail
+      - ./tests:/tests
+      - ./logs:/logs
+    networks:
+      - test-network
+    working_dir: /tests
+    command: >
+      bash -c "
+        echo 'Waiting for mail server to receive messages...' &&
+        sleep 10 &&
+        python validate_mbox.py
+      "
+
+networks:
+  test-network:
+    driver: bridge

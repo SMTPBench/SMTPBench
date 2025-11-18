@@ -17,6 +17,9 @@ from tqdm import tqdm
 from datetime import datetime
 from colorama import Fore, Style, init as colorama_init
 
+# Import version from package
+from . import __version__
+
 # Init colorama for Windows/Linux
 colorama_init(autoreset=True)
 
@@ -38,12 +41,100 @@ journal_address = None
 debug_enabled = False
 debug_logger = None
 
+def show_help():
+    """Display help message with all available options."""
+    github_url = "https://github.com/SMTPBench/SMTPBench"
+    help_text = f"""
+{Fore.CYAN}╔══════════════════════════════════════════════════════════════════════════════╗
+║                            SMTPBench v{__version__}                              ║
+║              SMTP Load Testing and Benchmarking Tool                         ║
+║                                                                              ║
+║  {Fore.YELLOW}GitHub:{Style.RESET_ALL} {Fore.BLUE}{github_url:<61}{Fore.CYAN} ║
+╚══════════════════════════════════════════════════════════════════════════════╝{Style.RESET_ALL}
+
+{Fore.GREEN}USAGE:{Style.RESET_ALL}
+    smtpbench [OPTIONS]
+
+{Fore.GREEN}REQUIRED PARAMETERS:{Style.RESET_ALL}
+    {Fore.YELLOW}recipient{Style.RESET_ALL}=EMAIL          Target email address
+    {Fore.YELLOW}port{Style.RESET_ALL}=NUMBER              SMTP port (25, 587, 465, etc.)
+    {Fore.YELLOW}threads{Style.RESET_ALL}=NUMBER           Number of concurrent threads
+    {Fore.YELLOW}messages{Style.RESET_ALL}=NUMBER          Messages per thread (0 for infinite)
+
+{Fore.GREEN}OPTIONAL PARAMETERS:{Style.RESET_ALL}
+    {Fore.YELLOW}lb_host{Style.RESET_ALL}=HOSTNAME         Load balancer/SMTP host (skips MX lookup)
+    {Fore.YELLOW}from_address{Style.RESET_ALL}=EMAIL       Sender email address (default: no-reply@localhost)
+    {Fore.YELLOW}use_tls{Style.RESET_ALL}=BOOL             Enable TLS/STARTTLS (default: true)
+    {Fore.YELLOW}delay{Style.RESET_ALL}=SECONDS            Fixed delay between messages (default: 0)
+    {Fore.YELLOW}random_delay{Style.RESET_ALL}=BOOL        Random 1-15 second delay (default: false)
+    {Fore.YELLOW}retry_delay{Style.RESET_ALL}=SECONDS      Wait time between retries (default: 20)
+    {Fore.YELLOW}max_retries{Style.RESET_ALL}=NUMBER       Maximum retry attempts (default: 3)
+    {Fore.YELLOW}transaction_timeout{Style.RESET_ALL}=SEC  SMTP timeout in seconds (default: 20)
+    {Fore.YELLOW}client_hostname{Style.RESET_ALL}=NAME     Client hostname for HELO/EHLO (default: system)
+    {Fore.YELLOW}logfile_output{Style.RESET_ALL}=PATH      Log directory (default: ./logs)
+    {Fore.YELLOW}journal{Style.RESET_ALL}=BOOL             Enable journal mode (default: false)
+    {Fore.YELLOW}journal_address{Style.RESET_ALL}=EMAIL    Journal recipient (default: same as recipient)
+    {Fore.YELLOW}debug{Style.RESET_ALL}=BOOL               Enable debug logging (default: false)
+
+{Fore.GREEN}EXAMPLES:{Style.RESET_ALL}
+    {Fore.CYAN}# Basic test with 5 threads, 10 messages each{Style.RESET_ALL}
+    smtpbench recipient=test@example.com port=587 threads=5 messages=10
+
+    {Fore.CYAN}# Test with TLS and custom sender{Style.RESET_ALL}
+    smtpbench recipient=test@example.com port=587 \\
+              from_address=sender@example.com \\
+              threads=10 messages=100 use_tls=true
+
+    {Fore.CYAN}# Test using load balancer instead of MX lookup{Style.RESET_ALL}
+    smtpbench recipient=test@example.com lb_host=smtp.example.com \\
+              port=587 threads=5 messages=20
+
+    {Fore.CYAN}# High-volume test with retries and timeout{Style.RESET_ALL}
+    smtpbench recipient=test@example.com port=587 \\
+              threads=100 messages=1000 \\
+              retry_delay=10 max_retries=5 \\
+              transaction_timeout=30
+
+    {Fore.CYAN}# Continuous load test (infinite messages){Style.RESET_ALL}
+    smtpbench recipient=test@example.com port=587 \\
+              threads=5 messages=0 random_delay=true
+
+{Fore.GREEN}OUTPUT:{Style.RESET_ALL}
+    • Real-time progress bar with success/fail counts
+    • Color-coded success rate (green ≥90%, yellow 70-89%, red <70%)
+    • JSON logs: success, fail, retry, debug (when enabled)
+    • Each email includes X-SMTPBench-Run-UUID header for tracking
+
+{Fore.GREEN}MORE INFORMATION:{Style.RESET_ALL}
+    GitHub:        {Fore.BLUE}https://github.com/SMTPBench/SMTPBench{Style.RESET_ALL}
+    Documentation: https://github.com/SMTPBench/SMTPBench#readme
+    Issues:        https://github.com/SMTPBench/SMTPBench/issues
+    Version:       {__version__}
+
+{Fore.YELLOW}⚠️  WARNING: This tool sends real emails. Ensure you have permission to test.{Style.RESET_ALL}
+"""
+    print(help_text)
+    sys.exit(0)
+
+
 def parse_args():
     """Parse key=value style arguments into a dictionary."""
+    # Check for version flag
+    if any(arg.lower() in ['-v', '--version', 'version'] for arg in sys.argv[1:]):
+        print(f"{Fore.CYAN}SMTPBench{Style.RESET_ALL} version {Fore.YELLOW}{__version__}{Style.RESET_ALL}")
+        print(f"{Fore.BLUE}https://github.com/SMTPBench/SMTPBench{Style.RESET_ALL}")
+        sys.exit(0)
+    
+    # Check for help flags
+    if len(sys.argv) == 1 or any(arg.lower() in ['-h', '--help', 'help', '?', '-?', '--h'] for arg in sys.argv[1:]):
+        show_help()
+    
     args = {}
     for arg in sys.argv[1:]:
         if "=" not in arg:
-            print(f"Invalid argument format: {arg}. Use key=value.")
+            print(f"{Fore.RED}✗ Invalid argument format: {arg}{Style.RESET_ALL}")
+            print(f"{Fore.YELLOW}Expected format: key=value{Style.RESET_ALL}")
+            print(f"\nUse 'smtpbench --help' for usage information.\n")
             sys.exit(1)
         key, value = arg.split("=", 1)
         args[key.strip()] = value.strip()
@@ -154,12 +245,15 @@ def send_email(port, recipient, from_address, thread_id, message_id, retry_delay
     global success_count, fail_count, retry_count, stop_requested, journal_enabled, journal_address
 
     subject = f"Quick test from thread {thread_id} message {message_id} [{run_uuid}]"
-    body = f"{subject}\n\n--\nSMTP Load Test Tool"
+    body = f"{subject}\n\n--\nSMTPBench Load Testing Tool\nhttps://github.com/SMTPBench/SMTPBench"
 
     msg = MIMEMultipart()
     msg['From'] = from_address
     msg['To'] = recipient
     msg['Subject'] = subject
+    msg['X-SMTPBench-Run-UUID'] = run_uuid
+    msg['X-SMTPBench-Thread-ID'] = str(thread_id)
+    msg['X-SMTPBench-Message-ID'] = str(message_id)
     msg.attach(MIMEText(body, 'plain'))
 
     recipients = [recipient]
@@ -255,10 +349,18 @@ def main():
     args = parse_args()
 
     required = ["recipient", "port", "threads", "messages"]
-    for key in required:
-        if key not in args:
-            print(f"Missing required argument: {key}")
-            sys.exit(1)
+    missing = [key for key in required if key not in args]
+    if missing:
+        print(f"\n{Fore.RED}✗ Missing required parameter(s): {', '.join(missing)}{Style.RESET_ALL}\n")
+        print(f"{Fore.YELLOW}Required parameters:{Style.RESET_ALL}")
+        print(f"  • recipient=EMAIL     - Target email address")
+        print(f"  • port=NUMBER         - SMTP port (25, 587, 465, etc.)")
+        print(f"  • threads=NUMBER      - Number of concurrent threads")
+        print(f"  • messages=NUMBER     - Messages per thread (0 for infinite)")
+        print(f"\n{Fore.CYAN}Example:{Style.RESET_ALL}")
+        print(f"  smtpbench recipient=test@example.com port=587 threads=5 messages=10")
+        print(f"\n{Fore.CYAN}For full help, run:{Style.RESET_ALL} smtpbench --help\n")
+        sys.exit(1)
 
     log_dir = args.get("logfile_output", "./logs")
     os.makedirs(log_dir, exist_ok=True)

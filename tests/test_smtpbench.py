@@ -35,6 +35,29 @@ class TestArgumentParsing:
         sys.argv = ['smtpbench', 'invalid_arg']
         with pytest.raises(SystemExit):
             parse_args()
+    
+    def test_parse_args_help_flag(self):
+        """Test that help flags trigger help display"""
+        for flag in ['--help', '-h', 'help', '?']:
+            sys.argv = ['smtpbench', flag]
+            with pytest.raises(SystemExit) as exc_info:
+                parse_args()
+            assert exc_info.value.code == 0  # Help exits with 0
+    
+    def test_parse_args_version_flag(self):
+        """Test that version flags trigger version display"""
+        for flag in ['--version', '-v', 'version']:
+            sys.argv = ['smtpbench', flag]
+            with pytest.raises(SystemExit) as exc_info:
+                parse_args()
+            assert exc_info.value.code == 0  # Version exits with 0
+    
+    def test_parse_args_no_arguments(self):
+        """Test that no arguments shows help"""
+        sys.argv = ['smtpbench']
+        with pytest.raises(SystemExit) as exc_info:
+            parse_args()
+        assert exc_info.value.code == 0  # Help exits with 0
 
 
 class TestColorRate:
