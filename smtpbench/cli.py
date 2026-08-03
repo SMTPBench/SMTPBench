@@ -240,11 +240,11 @@ def log_json(
 
 def mx_lookup_all(recipient):
     """Perform MX lookup for recipient's domain and return all MX hosts sorted by priority."""
-    try:
-        domain = recipient.split("@")[1]
-    except IndexError:
+    parts = recipient.split("@")
+    if len(parts) != 2 or not parts[0] or not parts[1]:
         print(f"Invalid recipient email: {recipient}")
         sys.exit(1)
+    domain = parts[1]
 
     try:
         answers = dns.resolver.resolve(domain, "MX")
