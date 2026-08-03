@@ -1,25 +1,27 @@
-import smtplib
-import threading
-import sys
-import time
-import logging
-import signal
 import json
-import random
-import dns.resolver
-import uuid
-import socket
-import os
-import traceback
+import logging
 import mimetypes
-from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
-from email.mime.base import MIMEBase
-from email import encoders
-from email.utils import formatdate
-from tqdm import tqdm
+import os
+import random
+import signal
+import smtplib
+import socket
+import sys
+import threading
+import time
+import traceback
+import uuid
 from datetime import datetime
-from colorama import Fore, Style, init as colorama_init
+from email import encoders
+from email.mime.base import MIMEBase
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
+from email.utils import formatdate
+
+import dns.resolver
+from colorama import Fore, Style
+from colorama import init as colorama_init
+from tqdm import tqdm
 
 # Import version from package
 from . import __version__
@@ -52,6 +54,7 @@ SIZE_UNITS = {
     "MB": 1024 * 1024,
     "M": 1024 * 1024,
 }
+
 
 def show_help():
     """Display help message with all available options."""
@@ -150,25 +153,30 @@ def show_help():
 def parse_args():
     """Parse key=value style arguments into a dictionary."""
     # Check for version flag
-    if any(arg.lower() in ['-v', '--version', 'version'] for arg in sys.argv[1:]):
-        print(f"{Fore.CYAN}SMTPBench{Style.RESET_ALL} version {Fore.YELLOW}{__version__}{Style.RESET_ALL}")
+    if any(arg.lower() in ["-v", "--version", "version"] for arg in sys.argv[1:]):
+        print(
+            f"{Fore.CYAN}SMTPBench{Style.RESET_ALL} version {Fore.YELLOW}{__version__}{Style.RESET_ALL}"
+        )
         print(f"{Fore.BLUE}https://github.com/SMTPBench/SMTPBench{Style.RESET_ALL}")
         sys.exit(0)
-    
+
     # Check for help flags
-    if len(sys.argv) == 1 or any(arg.lower() in ['-h', '--help', 'help', '?'] for arg in sys.argv[1:]):
+    if len(sys.argv) == 1 or any(
+        arg.lower() in ["-h", "--help", "help", "?"] for arg in sys.argv[1:]
+    ):
         show_help()
-    
+
     args = {}
     for arg in sys.argv[1:]:
         if "=" not in arg:
             print(f"{Fore.RED}✗ Invalid argument format: {arg}{Style.RESET_ALL}")
             print(f"{Fore.YELLOW}Expected format: key=value{Style.RESET_ALL}")
-            print(f"\nUse 'smtpbench --help' for usage information.\n")
+            print("\nUse 'smtpbench --help' for usage information.\n")
             sys.exit(1)
         key, value = arg.split("=", 1)
         args[key.strip()] = value.strip()
     return args
+
 
 def setup_logging():
     """Setup separate JSON loggers for success, fail, retry, and debug."""
@@ -178,7 +186,7 @@ def setup_logging():
         filename = os.path.join(log_dir, f"{name}_{run_timestamp}_{run_uuid}.log")
         logger = logging.getLogger(name)
         handler = logging.FileHandler(filename)
-        formatter = logging.Formatter('%(message)s')  # raw JSON
+        formatter = logging.Formatter("%(message)s")  # raw JSON
         handler.setFormatter(formatter)
         logger.addHandler(handler)
         logger.setLevel(logging.INFO)
@@ -188,14 +196,27 @@ def setup_logging():
     debug_filename = os.path.join(log_dir, f"debug_{run_timestamp}_{run_uuid}.log")
     debug_logger = logging.getLogger("debug")
     debug_handler = logging.FileHandler(debug_filename)
-    debug_formatter = logging.Formatter('%(asctime)s - %(message)s')
+    debug_formatter = logging.Formatter("%(asctime)s - %(message)s")
     debug_handler.setFormatter(debug_formatter)
     debug_logger.addHandler(debug_handler)
     debug_logger.setLevel(logging.DEBUG)
 
     return loggers
 
-def log_json(logger, status, thread_id, message_id, duration, error=None, attempt=None, retry_number=None, mx_host_used=None, recipients=None, attachments=None):
+
+def log_json(
+    logger,
+    status,
+    thread_id,
+    message_id,
+    duration,
+    error=None,
+    attempt=None,
+    retry_number=None,
+    mx_host_used=None,
+    recipients=None,
+    attachments=None,
+):
     """Log structured JSON for each transaction."""
     entry = {
         "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime()),
@@ -209,22 +230,27 @@ def log_json(logger, status, thread_id, message_id, duration, error=None, attemp
         "retry_number": retry_number,
         "mx_host_used": mx_host_used,
         "recipients": recipients,
-        "attachments": [{k: v for k, v in a.items() if k != "content"} for a in (attachments or [])],
-        "error": str(error) if error else None
+        "attachments": [
+            {k: v for k, v in a.items() if k != "content"} for a in (attachments or [])
+        ],
+        "error": str(error) if error else None,
     }
     logger.info(json.dumps(entry))
 
+
 def mx_lookup_all(recipient):
     """Perform MX lookup for recipient's domain and return all MX hosts sorted by priority."""
-    try:
-        domain = recipient.split("@")[1]
-    except IndexError:
+    parts = recipient.split("@")
+    if len(parts) != 2 or not parts[0] or not parts[1]:
         print(f"Invalid recipient email: {recipient}")
         sys.exit(1)
+    domain = parts[1]
 
     try:
-        answers = dns.resolver.resolve(domain, 'MX')
-        mx_records = sorted([(r.preference, str(r.exchange).rstrip('.')) for r in answers], key=lambda x: x[0])
+        answers = dns.resolver.resolve(domain, "MX")
+        mx_records = sorted(
+            [(r.preference, str(r.exchange).rstrip(".")) for r in answers], key=lambda x: x[0]
+        )
         if mx_records:
             print(f"[INFO] MX lookup for {domain}:")
             for pref, host in mx_records:
@@ -236,6 +262,7 @@ def mx_lookup_all(recipient):
     except Exception as e:
         print(f"MX lookup failed for {domain}: {e}")
         sys.exit(1)
+
 
 def color_rate(rate):
     """Return colored string for success rate."""
@@ -300,38 +327,50 @@ def build_attachment_configs(args):
         if not os.path.isfile(attachment_path):
             raise FileNotFoundError(f"Attachment file not found: {attachment_path}")
         filename = args.get("attachment_filename", os.path.basename(attachment_path))
-        mime_type = mime_type_override or mimetypes.guess_type(filename)[0] or "application/octet-stream"
+        mime_type = (
+            mime_type_override or mimetypes.guess_type(filename)[0] or "application/octet-stream"
+        )
         with open(attachment_path, "rb") as attachment_file:
             content = attachment_file.read()
-        return [{
-            "filename": filename,
-            "size_bytes": len(content),
-            "mime_type": mime_type,
-            "source": "file",
-            "content": content,
-        }]
+        return [
+            {
+                "filename": filename,
+                "size_bytes": len(content),
+                "mime_type": mime_type,
+                "source": "file",
+                "content": content,
+            }
+        ]
 
     size_bytes = parse_size(attachment_size)
     base_filename = args.get("attachment_filename", "attachment.bin")
-    mime_type = mime_type_override or mimetypes.guess_type(base_filename)[0] or "application/octet-stream"
+    mime_type = (
+        mime_type_override or mimetypes.guess_type(base_filename)[0] or "application/octet-stream"
+    )
     content = b"0" * size_bytes
-    return [{
-        "filename": numbered_filename(base_filename, index, attachment_count),
-        "size_bytes": size_bytes,
-        "mime_type": mime_type,
-        "source": "generated",
-        "content": content,
-    } for index in range(1, attachment_count + 1)]
+    return [
+        {
+            "filename": numbered_filename(base_filename, index, attachment_count),
+            "size_bytes": size_bytes,
+            "mime_type": mime_type,
+            "source": "generated",
+            "content": content,
+        }
+        for index in range(1, attachment_count + 1)
+    ]
 
 
 def attachment_metadata(attachment_configs):
     """Return log-safe attachment metadata without raw content bytes."""
-    return [{
-        "filename": config["filename"],
-        "size_bytes": config["size_bytes"],
-        "mime_type": config["mime_type"],
-        "source": config["source"],
-    } for config in attachment_configs]
+    return [
+        {
+            "filename": config["filename"],
+            "size_bytes": config["size_bytes"],
+            "mime_type": config["mime_type"],
+            "source": config["source"],
+        }
+        for config in attachment_configs
+    ]
 
 
 def create_message(recipient, from_address, thread_id, message_id, attachment_configs=None):
@@ -340,14 +379,14 @@ def create_message(recipient, from_address, thread_id, message_id, attachment_co
     body = f"{subject}\n\n--\nSMTPBench Load Testing Tool\nhttps://github.com/SMTPBench/SMTPBench"
 
     msg = MIMEMultipart()
-    msg['From'] = from_address
-    msg['To'] = recipient
-    msg['Subject'] = subject
-    msg['Date'] = formatdate(localtime=True)
-    msg['X-SMTPBench-Run-UUID'] = run_uuid
-    msg['X-SMTPBench-Thread-ID'] = str(thread_id)
-    msg['X-SMTPBench-Message-ID'] = str(message_id)
-    msg.attach(MIMEText(body, 'plain'))
+    msg["From"] = from_address
+    msg["To"] = recipient
+    msg["Subject"] = subject
+    msg["Date"] = formatdate(localtime=True)
+    msg["X-SMTPBench-Run-UUID"] = run_uuid
+    msg["X-SMTPBench-Thread-ID"] = str(thread_id)
+    msg["X-SMTPBench-Message-ID"] = str(message_id)
+    msg.attach(MIMEText(body, "plain"))
 
     for config in attachment_configs or []:
         maintype, subtype = config["mime_type"].split("/", 1)
@@ -389,7 +428,21 @@ def try_send_to_mx_hosts(from_address, recipients, msg, port, use_tls, transacti
             continue
     return None, last_error  # All MX hosts failed
 
-def send_email(port, recipient, from_address, thread_id, message_id, retry_delay, loggers, use_tls, transaction_timeout, max_retries, progress_bar, attachment_configs=None):
+
+def send_email(
+    port,
+    recipient,
+    from_address,
+    thread_id,
+    message_id,
+    retry_delay,
+    loggers,
+    use_tls,
+    transaction_timeout,
+    max_retries,
+    progress_bar,
+    attachment_configs=None,
+):
     """Send a single test email, trying all MX hosts if needed."""
     global success_count, fail_count, retry_count, stop_requested, journal_enabled, journal_address
 
@@ -404,7 +457,9 @@ def send_email(port, recipient, from_address, thread_id, message_id, retry_delay
     while not stop_requested and attempt <= max_retries:
         attempt += 1
         start_time = time.time()
-        mx_host_used, error = try_send_to_mx_hosts(from_address, recipients, msg, port, use_tls, transaction_timeout)
+        mx_host_used, error = try_send_to_mx_hosts(
+            from_address, recipients, msg, port, use_tls, transaction_timeout
+        )
 
         if error is None:
             duration = time.time() - start_time
@@ -412,8 +467,20 @@ def send_email(port, recipient, from_address, thread_id, message_id, retry_delay
                 success_count += 1
                 total_attempts = success_count + fail_count
                 success_rate = (success_count / total_attempts * 100) if total_attempts > 0 else 0
-                progress_bar.set_postfix(Success=success_count, Fail=fail_count, Rate=color_rate(success_rate))
-            log_json(loggers["success"], "success", thread_id, message_id, duration, attempt=attempt, mx_host_used=mx_host_used, recipients=recipients, attachments=attachments)
+                progress_bar.set_postfix(
+                    Success=success_count, Fail=fail_count, Rate=color_rate(success_rate)
+                )
+            log_json(
+                loggers["success"],
+                "success",
+                thread_id,
+                message_id,
+                duration,
+                attempt=attempt,
+                mx_host_used=mx_host_used,
+                recipients=recipients,
+                attachments=attachments,
+            )
             return
         else:
             duration = time.time() - start_time
@@ -421,24 +488,78 @@ def send_email(port, recipient, from_address, thread_id, message_id, retry_delay
                 fail_count += 1
                 total_attempts = success_count + fail_count
                 success_rate = (success_count / total_attempts * 100) if total_attempts > 0 else 0
-                progress_bar.set_postfix(Success=success_count, Fail=fail_count, Rate=color_rate(success_rate))
-            log_json(loggers["fail"], "fail", thread_id, message_id, duration, error=error, attempt=attempt, mx_host_used=mx_host_used, recipients=recipients, attachments=attachments)
+                progress_bar.set_postfix(
+                    Success=success_count, Fail=fail_count, Rate=color_rate(success_rate)
+                )
+            log_json(
+                loggers["fail"],
+                "fail",
+                thread_id,
+                message_id,
+                duration,
+                error=error,
+                attempt=attempt,
+                mx_host_used=mx_host_used,
+                recipients=recipients,
+                attachments=attachments,
+            )
 
             if attempt <= max_retries:
                 with lock:
                     retry_count += 1
-                log_json(loggers["retry"], "retry", thread_id, message_id, duration, error=error, attempt=attempt, retry_number=attempt-1, mx_host_used=mx_host_used, recipients=recipients, attachments=attachments)
+                log_json(
+                    loggers["retry"],
+                    "retry",
+                    thread_id,
+                    message_id,
+                    duration,
+                    error=error,
+                    attempt=attempt,
+                    retry_number=attempt - 1,
+                    mx_host_used=mx_host_used,
+                    recipients=recipients,
+                    attachments=attachments,
+                )
                 time.sleep(retry_delay)
             else:
                 return
 
-def worker(port, recipient, from_address, thread_id, messages_per_thread, retry_delay, loggers, use_tls, delay, random_delay, transaction_timeout, max_retries, progress_bar, attachment_configs=None):
+
+def worker(
+    port,
+    recipient,
+    from_address,
+    thread_id,
+    messages_per_thread,
+    retry_delay,
+    loggers,
+    use_tls,
+    delay,
+    random_delay,
+    transaction_timeout,
+    max_retries,
+    progress_bar,
+    attachment_configs=None,
+):
     """Worker thread to send multiple messages."""
     message_id = 1
     while not stop_requested:
         if messages_per_thread > 0 and message_id > messages_per_thread:
             break
-        send_email(port, recipient, from_address, thread_id, message_id, retry_delay, loggers, use_tls, transaction_timeout, max_retries, progress_bar, attachment_configs)
+        send_email(
+            port,
+            recipient,
+            from_address,
+            thread_id,
+            message_id,
+            retry_delay,
+            loggers,
+            use_tls,
+            transaction_timeout,
+            max_retries,
+            progress_bar,
+            attachment_configs,
+        )
         progress_bar.update(1)
 
         message_id += 1
@@ -447,11 +568,13 @@ def worker(port, recipient, from_address, thread_id, messages_per_thread, retry_
         elif delay > 0:
             time.sleep(delay)
 
+
 def signal_handler(sig, frame):
     """Handle Ctrl+C or stop signal."""
     global stop_requested
     print("\nStop signal received. Finishing current sends...")
     stop_requested = True
+
 
 def check_smtp_banner(host, port, use_tls, transaction_timeout):
     """Check SMTP connectivity and banner before starting the test."""
@@ -463,7 +586,9 @@ def check_smtp_banner(host, port, use_tls, transaction_timeout):
                 server.set_debuglevel(1)
             code, banner = server.ehlo()
             if code != 250:
-                print(f"[ERROR] SMTP banner check failed for {host}:{port} - Code: {code}, Banner: {banner}")
+                print(
+                    f"[ERROR] SMTP banner check failed for {host}:{port} - Code: {code}, Banner: {banner}"
+                )
                 if debug_enabled:
                     debug_logger.debug(f"SMTP banner check failed: Code={code}, Banner={banner}")
                 sys.exit(1)
@@ -471,11 +596,17 @@ def check_smtp_banner(host, port, use_tls, transaction_timeout):
                 server.starttls()
                 code, banner = server.ehlo()
                 if code != 250:
-                    print(f"[ERROR] SMTP EHLO after STARTTLS failed for {host}:{port} - Code: {code}, Banner: {banner}")
+                    print(
+                        f"[ERROR] SMTP EHLO after STARTTLS failed for {host}:{port} - Code: {code}, Banner: {banner}"
+                    )
                     if debug_enabled:
-                        debug_logger.debug(f"SMTP EHLO after STARTTLS failed: Code={code}, Banner={banner}")
+                        debug_logger.debug(
+                            f"SMTP EHLO after STARTTLS failed: Code={code}, Banner={banner}"
+                        )
                     sys.exit(1)
-            print(f"[INFO] SMTP banner check passed for {host}:{port} - {banner.decode() if isinstance(banner, bytes) else banner}")
+            print(
+                f"[INFO] SMTP banner check passed for {host}:{port} - {banner.decode() if isinstance(banner, bytes) else banner}"
+            )
             if debug_enabled:
                 debug_logger.debug(f"SMTP banner check passed: {banner}")
     except Exception as e:
@@ -484,21 +615,31 @@ def check_smtp_banner(host, port, use_tls, transaction_timeout):
             debug_logger.debug(f"SMTP banner check exception: {traceback.format_exc()}")
         sys.exit(1)
 
+
 def main():
-    global stop_requested, client_hostname, mx_hosts, log_dir, journal_enabled, journal_address, debug_enabled
+    global \
+        stop_requested, \
+        client_hostname, \
+        mx_hosts, \
+        log_dir, \
+        journal_enabled, \
+        journal_address, \
+        debug_enabled
     args = parse_args()
 
     required = ["recipient", "port", "threads", "messages"]
     missing = [key for key in required if key not in args]
     if missing:
-        print(f"\n{Fore.RED}✗ Missing required parameter(s): {', '.join(missing)}{Style.RESET_ALL}\n")
+        print(
+            f"\n{Fore.RED}✗ Missing required parameter(s): {', '.join(missing)}{Style.RESET_ALL}\n"
+        )
         print(f"{Fore.YELLOW}Required parameters:{Style.RESET_ALL}")
-        print(f"  • recipient=EMAIL     - Target email address")
-        print(f"  • port=NUMBER         - SMTP port (25, 587, 465, etc.)")
-        print(f"  • threads=NUMBER      - Number of concurrent threads")
-        print(f"  • messages=NUMBER     - Messages per thread (0 for infinite)")
+        print("  • recipient=EMAIL     - Target email address")
+        print("  • port=NUMBER         - SMTP port (25, 587, 465, etc.)")
+        print("  • threads=NUMBER      - Number of concurrent threads")
+        print("  • messages=NUMBER     - Messages per thread (0 for infinite)")
         print(f"\n{Fore.CYAN}Example:{Style.RESET_ALL}")
-        print(f"  smtpbench recipient=test@example.com port=587 threads=5 messages=10")
+        print("  smtpbench recipient=test@example.com port=587 threads=5 messages=10")
         print(f"\n{Fore.CYAN}For full help, run:{Style.RESET_ALL} smtpbench --help\n")
         sys.exit(1)
 
@@ -549,11 +690,17 @@ def main():
     if journal_enabled:
         print(f"[INFO] Journal mode enabled. Journal address: {journal_address}")
     if debug_enabled:
-        print(f"[INFO] Debug mode enabled. Debug log: {os.path.join(log_dir, f'debug_{run_timestamp}_{run_uuid}.log')}")
+        print(
+            f"[INFO] Debug mode enabled. Debug log: {os.path.join(log_dir, f'debug_{run_timestamp}_{run_uuid}.log')}"
+        )
     if attachment_configs:
         total_attachment_bytes = sum(config["size_bytes"] for config in attachment_configs)
-        estimated_total_bytes = total_attachment_bytes * total_messages if total_messages else "unbounded"
-        print(f"[INFO] Attachments enabled: {len(attachment_configs)} file(s), {total_attachment_bytes} bytes per message")
+        estimated_total_bytes = (
+            total_attachment_bytes * total_messages if total_messages else "unbounded"
+        )
+        print(
+            f"[INFO] Attachments enabled: {len(attachment_configs)} file(s), {total_attachment_bytes} bytes per message"
+        )
         print(f"[INFO] Estimated total attachment payload: {estimated_total_bytes} bytes")
 
     threads = []
@@ -562,7 +709,22 @@ def main():
     for t in range(1, threads_count + 1):
         thread = threading.Thread(
             target=worker,
-            args=(port, recipient, from_address, t, messages_per_thread, retry_delay, loggers, use_tls, delay, random_delay, transaction_timeout, max_retries, progress_bar, attachment_configs)
+            args=(
+                port,
+                recipient,
+                from_address,
+                t,
+                messages_per_thread,
+                retry_delay,
+                loggers,
+                use_tls,
+                delay,
+                random_delay,
+                transaction_timeout,
+                max_retries,
+                progress_bar,
+                attachment_configs,
+            ),
         )
         threads.append(thread)
         thread.start()
@@ -583,13 +745,16 @@ def main():
     print(f"Elapsed Time: {elapsed:.2f} seconds")
     print(f"Logs saved in: {os.path.abspath(log_dir)}")
 
+
 if __name__ == "__main__":
     if len(sys.argv) < 5:
-        print("Usage: python smtp_load_test.py recipient=<email> port=<port> threads=<n> messages=<n> "
-              "[lb_host=<host>] [from_address=<email>] [retry_delay=<sec>] [use_tls=true|false] [delay=<sec>] "
-              "[random_delay=true|false] [transaction_timeout=<sec>] [max_retries=<n>] [client_hostname=<name>] "
-              "[logfile_output=<dir>] [journal=true|false] [journal_address=<email>] [debug=true|false] "
-              "[attachment_path=<path>|attachment_size=<size>] [attachment_count=<n>] "
-              "[attachment_filename=<name>] [attachment_mime_type=<mime>]")
+        print(
+            "Usage: python smtp_load_test.py recipient=<email> port=<port> threads=<n> messages=<n> "
+            "[lb_host=<host>] [from_address=<email>] [retry_delay=<sec>] [use_tls=true|false] [delay=<sec>] "
+            "[random_delay=true|false] [transaction_timeout=<sec>] [max_retries=<n>] [client_hostname=<name>] "
+            "[logfile_output=<dir>] [journal=true|false] [journal_address=<email>] [debug=true|false] "
+            "[attachment_path=<path>|attachment_size=<size>] [attachment_count=<n>] "
+            "[attachment_filename=<name>] [attachment_mime_type=<mime>]"
+        )
         sys.exit(1)
     main()
