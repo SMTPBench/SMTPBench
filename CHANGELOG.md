@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.1] - 2026-08-03
+
+### Added
+- **Ruff Linting & Formatting**: Adopted Ruff as the linter and formatter (`E, F, I, W, UP` rule set, `E501` left to the formatter), configured in `pyproject.toml`.
+- **Lint Gates**: `deploy.sh` and the CI workflow now fail closed on lint or formatting errors; `deploy.sh` resolves Ruff from the deployment environment before publishing.
+
+### Changed
+- **Recipient Validation**: Reject recipient addresses containing multiple `@` characters.
+- **Integration Test Scoping**: Correlate all integration assertions with the current run UUID so stale messages in the shared mbox can no longer satisfy them; assert Docker command success. `validate_mbox.py` fails closed when no run UUID is available, with an explicit `ALLOW_UNSCOPED_VALIDATION=true` opt-in.
+
+### Security
+- **CI Hardening**: Set `persist-credentials: false` on all workflow checkout steps.
+
 ## [1.1.0] - 2025-11-18
 
 ### Added
