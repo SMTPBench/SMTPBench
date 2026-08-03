@@ -135,6 +135,35 @@ smtpbench \
     messages=20
 ```
 
+### With Attachments
+
+Attach a static file to every generated message:
+
+```bash
+smtpbench \
+    recipient=test@local.lets.qa \
+    port=587 \
+    threads=2 \
+    messages=5 \
+    attachment_path=./sample.pdf
+```
+
+Generate synthetic attachments for size-based benchmarking:
+
+```bash
+smtpbench \
+    recipient=test@local.lets.qa \
+    port=587 \
+    threads=2 \
+    messages=5 \
+    attachment_size=1MB \
+    attachment_count=2 \
+    attachment_filename=payload.bin \
+    attachment_mime_type=application/octet-stream
+```
+
+> **Attachment safety:** Attachments multiply outbound traffic and downstream storage pressure. SMTPBench prints the per-message attachment size and estimated total attachment payload before sending when attachments are enabled.
+
 ### As a Python Module
 
 ```bash
@@ -176,6 +205,11 @@ smtpbench --help
 | `journal` | `false` | Enable journal mode |
 | `journal_address` | *(same as recipient)* | Email address for journal copies |
 | `debug` | `false` | Enable debug logging |
+| `attachment_path` | *(none)* | Attach a specific file to every message |
+| `attachment_size` | *(none)* | Generate synthetic attachment(s) of a given size (`512KB`, `1MB`, etc.) |
+| `attachment_count` | `1` | Number of generated attachments per message |
+| `attachment_filename` | source/generated name | Override attachment filename (`payload.bin` becomes `payload-1.bin`, `payload-2.bin`, etc. when count > 1) |
+| `attachment_mime_type` | auto-detected / `application/octet-stream` | Override attachment MIME type |
 
 ## Output and Logging
 
@@ -203,6 +237,14 @@ SMTPBench creates structured JSON logs in the specified log directory:
   "retry_number": null,
   "mx_host_used": "mx1.local.lets.qa",
   "recipients": ["test@local.lets.qa"],
+  "attachments": [
+    {
+      "filename": "payload.bin",
+      "size_bytes": 1048576,
+      "mime_type": "application/octet-stream",
+      "source": "generated"
+    }
+  ],
   "error": null
 }
 ```

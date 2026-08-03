@@ -9,6 +9,8 @@ from smtpbench.cli import (
     color_rate,
     log_json,
     mx_lookup_all,
+    build_attachment_configs,
+    create_message,
 )
 
 
@@ -92,6 +94,63 @@ class TestColorRate:
         assert '\033[33m' in result  # Should be yellow
 
 
+class TestAttachments:
+    """Test attachment configuration and MIME construction"""
+
+    def test_build_attachment_configs_for_static_file(self, tmp_path):
+        """Static attachment files are captured with name, size, MIME type, and bytes."""
+        attachment = tmp_path / "sample.txt"
+        attachment.write_text("hello attachment", encoding="utf-8")
+
+        configs = build_attachment_configs({"attachment_path": str(attachment)})
+
+        assert len(configs) == 1
+        assert configs[0]["filename"] == "sample.txt"
+        assert configs[0]["size_bytes"] == len("hello attachment")
+        assert configs[0]["mime_type"] == "text/plain"
+        assert configs[0]["source"] == "file"
+        assert configs[0]["content"] == b"hello attachment"
+
+    def test_build_attachment_configs_generates_requested_size(self):
+        """Synthetic attachments are generated at the requested size."""
+        configs = build_attachment_configs({
+            "attachment_size": "2KB",
+            "attachment_count": "2",
+            "attachment_filename": "payload.bin",
+            "attachment_mime_type": "application/octet-stream",
+        })
+
+        assert len(configs) == 2
+        assert [config["filename"] for config in configs] == ["payload-1.bin", "payload-2.bin"]
+        assert all(config["size_bytes"] == 2048 for config in configs)
+        assert all(config["mime_type"] == "application/octet-stream" for config in configs)
+        assert all(config["source"] == "generated" for config in configs)
+        assert all(len(config["content"]) == 2048 for config in configs)
+
+    def test_create_message_attaches_files_and_preserves_tracking_headers(self, tmp_path):
+        """Attachment-enabled messages remain multipart and keep SMTPBench headers."""
+        attachment = tmp_path / "evidence.txt"
+        attachment.write_text("payload", encoding="utf-8")
+        attachment_configs = build_attachment_configs({"attachment_path": str(attachment)})
+
+        message = create_message(
+            recipient="test@local.lets.qa",
+            from_address="sender@local.lets.qa",
+            thread_id=3,
+            message_id=7,
+            attachment_configs=attachment_configs,
+        )
+
+        assert message["X-SMTPBench-Thread-ID"] == "3"
+        assert message["X-SMTPBench-Message-ID"] == "7"
+        parts = message.get_payload()
+        assert len(parts) == 2
+        assert parts[0].get_content_type() == "text/plain"
+        assert parts[1].get_filename() == "evidence.txt"
+        assert parts[1].get_content_type() == "text/plain"
+        assert parts[1].get_payload(decode=True) == b"payload"
+
+
 class TestLogJSON:
     """Test JSON logging functionality"""
 
@@ -121,6 +180,31 @@ class TestLogJSON:
         assert log_entry['mx_host_used'] == 'mx1.local.lets.qa'
         assert log_entry['recipients'] == ['test@local.lets.qa']
         assert log_entry['error'] is None
+
+    def test_log_json_includes_attachment_metadata(self):
+        """Test attachment metadata is logged without raw content bytes."""
+        mock_logger = Mock()
+        attachments = [{
+            "filename": "payload.bin",
+            "size_bytes": 2048,
+            "mime_type": "application/octet-stream",
+            "source": "generated",
+        }]
+
+        log_json(
+            mock_logger,
+            status="success",
+            thread_id=1,
+            message_id=1,
+            duration=0.5,
+            attachments=attachments,
+        )
+
+        call_args = mock_logger.info.call_args[0][0]
+        log_entry = json.loads(call_args)
+
+        assert log_entry["attachments"] == attachments
+        assert "content" not in log_entry["attachments"][0]
 
     def test_log_json_with_error(self):
         """Test logging failed email with error"""
