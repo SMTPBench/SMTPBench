@@ -11,8 +11,11 @@ import uuid
 import socket
 import os
 import traceback
+import mimetypes
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
+from email.mime.base import MIMEBase
+from email import encoders
 from email.utils import formatdate
 from tqdm import tqdm
 from datetime import datetime
@@ -41,6 +44,14 @@ journal_enabled = False
 journal_address = None
 debug_enabled = False
 debug_logger = None
+
+SIZE_UNITS = {
+    "B": 1,
+    "KB": 1024,
+    "K": 1024,
+    "MB": 1024 * 1024,
+    "M": 1024 * 1024,
+}
 
 def show_help():
     """Display help message with all available options."""
@@ -76,6 +87,15 @@ def show_help():
     {Fore.YELLOW}journal{Style.RESET_ALL}=BOOL             Enable journal mode (default: false)
     {Fore.YELLOW}journal_address{Style.RESET_ALL}=EMAIL    Journal recipient (default: same as recipient)
     {Fore.YELLOW}debug{Style.RESET_ALL}=BOOL               Enable debug logging (default: false)
+    {Fore.YELLOW}attachment_path{Style.RESET_ALL}=PATH     Attach a specific file to each message
+    {Fore.YELLOW}attachment_size{Style.RESET_ALL}=SIZE     Generate synthetic attachment(s), e.g. 512KB, 5MB
+    {Fore.YELLOW}attachment_count{Style.RESET_ALL}=NUMBER  Number of generated attachments (default: 1)
+    {Fore.YELLOW}attachment_filename{Style.RESET_ALL}=NAME Filename for static/generated attachment(s)
+    {Fore.YELLOW}attachment_mime_type{Style.RESET_ALL}=MIME MIME type override for attachment(s)
+
+{Fore.YELLOW}ATTACHMENT SAFETY:{Style.RESET_ALL}
+    Attachments multiply outbound volume. SMTPBench prints estimated total
+    attachment payload before sending when attachments are enabled.
 
 {Fore.GREEN}EXAMPLES:{Style.RESET_ALL}
     {Fore.CYAN}# Basic test with 5 threads, 10 messages each{Style.RESET_ALL}
@@ -99,6 +119,15 @@ def show_help():
     {Fore.CYAN}# Continuous load test (infinite messages){Style.RESET_ALL}
     smtpbench recipient=test@example.com port=587 \\
               threads=5 messages=0 random_delay=true
+
+    {Fore.CYAN}# Attach a static file to each message{Style.RESET_ALL}
+    smtpbench recipient=test@example.com port=587 \\
+              threads=2 messages=5 attachment_path=./sample.pdf
+
+    {Fore.CYAN}# Generate two 1MB synthetic attachments per message{Style.RESET_ALL}
+    smtpbench recipient=test@example.com port=587 \\
+              threads=2 messages=5 attachment_size=1MB \\
+              attachment_count=2 attachment_filename=payload.bin
 
 {Fore.GREEN}OUTPUT:{Style.RESET_ALL}
     • Real-time progress bar with success/fail counts
@@ -166,7 +195,7 @@ def setup_logging():
 
     return loggers
 
-def log_json(logger, status, thread_id, message_id, duration, error=None, attempt=None, retry_number=None, mx_host_used=None, recipients=None):
+def log_json(logger, status, thread_id, message_id, duration, error=None, attempt=None, retry_number=None, mx_host_used=None, recipients=None, attachments=None):
     """Log structured JSON for each transaction."""
     entry = {
         "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime()),
@@ -180,6 +209,7 @@ def log_json(logger, status, thread_id, message_id, duration, error=None, attemp
         "retry_number": retry_number,
         "mx_host_used": mx_host_used,
         "recipients": recipients,
+        "attachments": [{k: v for k, v in a.items() if k != "content"} for a in (attachments or [])],
         "error": str(error) if error else None
     }
     logger.info(json.dumps(entry))
@@ -216,6 +246,124 @@ def color_rate(rate):
     else:
         return Fore.RED + f"{rate:.1f}%" + Style.RESET_ALL
 
+
+def parse_size(size_value):
+    """Parse attachment sizes like 1024, 2KB, or 5MB into bytes."""
+    value = str(size_value).strip().upper()
+    if not value:
+        raise ValueError("Attachment size cannot be empty")
+
+    number = ""
+    unit = "B"
+    for index, character in enumerate(value):
+        if character.isdigit():
+            number += character
+        else:
+            unit = value[index:].strip()
+            break
+
+    if not number:
+        raise ValueError(f"Invalid attachment size: {size_value}")
+    if unit not in SIZE_UNITS:
+        raise ValueError(f"Unsupported attachment size unit: {unit}")
+
+    return int(number) * SIZE_UNITS[unit]
+
+
+def numbered_filename(filename, index, total):
+    """Append a stable counter before a filename extension when needed."""
+    if total == 1:
+        return filename
+    root, extension = os.path.splitext(filename)
+    return f"{root}-{index}{extension}"
+
+
+def build_attachment_configs(args):
+    """Build attachment configurations from CLI arguments."""
+    attachment_path = args.get("attachment_path")
+    attachment_size = args.get("attachment_size")
+
+    if not attachment_path and not attachment_size:
+        return []
+    if attachment_path and attachment_size:
+        raise ValueError("Use either attachment_path or attachment_size, not both")
+
+    attachment_count = int(args.get("attachment_count", 1))
+    if attachment_count < 1:
+        raise ValueError("attachment_count must be at least 1")
+
+    mime_type_override = args.get("attachment_mime_type")
+
+    if attachment_path:
+        if attachment_count != 1:
+            raise ValueError("attachment_count is only supported with generated attachments")
+        if not os.path.isfile(attachment_path):
+            raise FileNotFoundError(f"Attachment file not found: {attachment_path}")
+        filename = args.get("attachment_filename", os.path.basename(attachment_path))
+        mime_type = mime_type_override or mimetypes.guess_type(filename)[0] or "application/octet-stream"
+        with open(attachment_path, "rb") as attachment_file:
+            content = attachment_file.read()
+        return [{
+            "filename": filename,
+            "size_bytes": len(content),
+            "mime_type": mime_type,
+            "source": "file",
+            "content": content,
+        }]
+
+    size_bytes = parse_size(attachment_size)
+    base_filename = args.get("attachment_filename", "attachment.bin")
+    mime_type = mime_type_override or mimetypes.guess_type(base_filename)[0] or "application/octet-stream"
+    content = b"0" * size_bytes
+    return [{
+        "filename": numbered_filename(base_filename, index, attachment_count),
+        "size_bytes": size_bytes,
+        "mime_type": mime_type,
+        "source": "generated",
+        "content": content,
+    } for index in range(1, attachment_count + 1)]
+
+
+def attachment_metadata(attachment_configs):
+    """Return log-safe attachment metadata without raw content bytes."""
+    return [{
+        "filename": config["filename"],
+        "size_bytes": config["size_bytes"],
+        "mime_type": config["mime_type"],
+        "source": config["source"],
+    } for config in attachment_configs]
+
+
+def create_message(recipient, from_address, thread_id, message_id, attachment_configs=None):
+    """Create a tracked SMTPBench MIME message with optional attachments."""
+    subject = f"Quick test from thread {thread_id} message {message_id} [{run_uuid}]"
+    body = f"{subject}\n\n--\nSMTPBench Load Testing Tool\nhttps://github.com/SMTPBench/SMTPBench"
+
+    msg = MIMEMultipart()
+    msg['From'] = from_address
+    msg['To'] = recipient
+    msg['Subject'] = subject
+    msg['Date'] = formatdate(localtime=True)
+    msg['X-SMTPBench-Run-UUID'] = run_uuid
+    msg['X-SMTPBench-Thread-ID'] = str(thread_id)
+    msg['X-SMTPBench-Message-ID'] = str(message_id)
+    msg.attach(MIMEText(body, 'plain'))
+
+    for config in attachment_configs or []:
+        maintype, subtype = config["mime_type"].split("/", 1)
+        attachment_part = MIMEBase(maintype, subtype)
+        attachment_part.set_payload(config["content"])
+        encoders.encode_base64(attachment_part)
+        attachment_part.add_header(
+            "Content-Disposition",
+            "attachment",
+            filename=config["filename"],
+        )
+        msg.attach(attachment_part)
+
+    return msg
+
+
 def try_send_to_mx_hosts(from_address, recipients, msg, port, use_tls, transaction_timeout):
     """Try sending to each MX host in order until one succeeds."""
     last_error = None
@@ -241,22 +389,12 @@ def try_send_to_mx_hosts(from_address, recipients, msg, port, use_tls, transacti
             continue
     return None, last_error  # All MX hosts failed
 
-def send_email(port, recipient, from_address, thread_id, message_id, retry_delay, loggers, use_tls, transaction_timeout, max_retries, progress_bar):
+def send_email(port, recipient, from_address, thread_id, message_id, retry_delay, loggers, use_tls, transaction_timeout, max_retries, progress_bar, attachment_configs=None):
     """Send a single test email, trying all MX hosts if needed."""
     global success_count, fail_count, retry_count, stop_requested, journal_enabled, journal_address
 
-    subject = f"Quick test from thread {thread_id} message {message_id} [{run_uuid}]"
-    body = f"{subject}\n\n--\nSMTPBench Load Testing Tool\nhttps://github.com/SMTPBench/SMTPBench"
-
-    msg = MIMEMultipart()
-    msg['From'] = from_address
-    msg['To'] = recipient
-    msg['Subject'] = subject
-    msg['Date'] = formatdate(localtime=True)
-    msg['X-SMTPBench-Run-UUID'] = run_uuid
-    msg['X-SMTPBench-Thread-ID'] = str(thread_id)
-    msg['X-SMTPBench-Message-ID'] = str(message_id)
-    msg.attach(MIMEText(body, 'plain'))
+    msg = create_message(recipient, from_address, thread_id, message_id, attachment_configs)
+    attachments = attachment_metadata(attachment_configs or [])
 
     recipients = [recipient]
     if journal_enabled and journal_address:
@@ -275,7 +413,7 @@ def send_email(port, recipient, from_address, thread_id, message_id, retry_delay
                 total_attempts = success_count + fail_count
                 success_rate = (success_count / total_attempts * 100) if total_attempts > 0 else 0
                 progress_bar.set_postfix(Success=success_count, Fail=fail_count, Rate=color_rate(success_rate))
-            log_json(loggers["success"], "success", thread_id, message_id, duration, attempt=attempt, mx_host_used=mx_host_used, recipients=recipients)
+            log_json(loggers["success"], "success", thread_id, message_id, duration, attempt=attempt, mx_host_used=mx_host_used, recipients=recipients, attachments=attachments)
             return
         else:
             duration = time.time() - start_time
@@ -284,23 +422,23 @@ def send_email(port, recipient, from_address, thread_id, message_id, retry_delay
                 total_attempts = success_count + fail_count
                 success_rate = (success_count / total_attempts * 100) if total_attempts > 0 else 0
                 progress_bar.set_postfix(Success=success_count, Fail=fail_count, Rate=color_rate(success_rate))
-            log_json(loggers["fail"], "fail", thread_id, message_id, duration, error=error, attempt=attempt, mx_host_used=mx_host_used, recipients=recipients)
+            log_json(loggers["fail"], "fail", thread_id, message_id, duration, error=error, attempt=attempt, mx_host_used=mx_host_used, recipients=recipients, attachments=attachments)
 
             if attempt <= max_retries:
                 with lock:
                     retry_count += 1
-                log_json(loggers["retry"], "retry", thread_id, message_id, duration, error=error, attempt=attempt, retry_number=attempt-1, mx_host_used=mx_host_used, recipients=recipients)
+                log_json(loggers["retry"], "retry", thread_id, message_id, duration, error=error, attempt=attempt, retry_number=attempt-1, mx_host_used=mx_host_used, recipients=recipients, attachments=attachments)
                 time.sleep(retry_delay)
             else:
                 return
 
-def worker(port, recipient, from_address, thread_id, messages_per_thread, retry_delay, loggers, use_tls, delay, random_delay, transaction_timeout, max_retries, progress_bar):
+def worker(port, recipient, from_address, thread_id, messages_per_thread, retry_delay, loggers, use_tls, delay, random_delay, transaction_timeout, max_retries, progress_bar, attachment_configs=None):
     """Worker thread to send multiple messages."""
     message_id = 1
     while not stop_requested:
         if messages_per_thread > 0 and message_id > messages_per_thread:
             break
-        send_email(port, recipient, from_address, thread_id, message_id, retry_delay, loggers, use_tls, transaction_timeout, max_retries, progress_bar)
+        send_email(port, recipient, from_address, thread_id, message_id, retry_delay, loggers, use_tls, transaction_timeout, max_retries, progress_bar, attachment_configs)
         progress_bar.update(1)
 
         message_id += 1
@@ -388,6 +526,11 @@ def main():
     journal_enabled = args.get("journal", "false").lower() == "true"
     journal_address = args.get("journal_address", recipient)
     debug_enabled = args.get("debug", "false").lower() == "true"
+    try:
+        attachment_configs = build_attachment_configs(args)
+    except Exception as e:
+        print(f"{Fore.RED}✗ Attachment configuration error: {e}{Style.RESET_ALL}")
+        sys.exit(1)
 
     loggers = setup_logging()
 
@@ -407,6 +550,11 @@ def main():
         print(f"[INFO] Journal mode enabled. Journal address: {journal_address}")
     if debug_enabled:
         print(f"[INFO] Debug mode enabled. Debug log: {os.path.join(log_dir, f'debug_{run_timestamp}_{run_uuid}.log')}")
+    if attachment_configs:
+        total_attachment_bytes = sum(config["size_bytes"] for config in attachment_configs)
+        estimated_total_bytes = total_attachment_bytes * total_messages if total_messages else "unbounded"
+        print(f"[INFO] Attachments enabled: {len(attachment_configs)} file(s), {total_attachment_bytes} bytes per message")
+        print(f"[INFO] Estimated total attachment payload: {estimated_total_bytes} bytes")
 
     threads = []
     start_time = time.time()
@@ -414,7 +562,7 @@ def main():
     for t in range(1, threads_count + 1):
         thread = threading.Thread(
             target=worker,
-            args=(port, recipient, from_address, t, messages_per_thread, retry_delay, loggers, use_tls, delay, random_delay, transaction_timeout, max_retries, progress_bar)
+            args=(port, recipient, from_address, t, messages_per_thread, retry_delay, loggers, use_tls, delay, random_delay, transaction_timeout, max_retries, progress_bar, attachment_configs)
         )
         threads.append(thread)
         thread.start()
@@ -440,6 +588,8 @@ if __name__ == "__main__":
         print("Usage: python smtp_load_test.py recipient=<email> port=<port> threads=<n> messages=<n> "
               "[lb_host=<host>] [from_address=<email>] [retry_delay=<sec>] [use_tls=true|false] [delay=<sec>] "
               "[random_delay=true|false] [transaction_timeout=<sec>] [max_retries=<n>] [client_hostname=<name>] "
-              "[logfile_output=<dir>] [journal=true|false] [journal_address=<email>] [debug=true|false]")
+              "[logfile_output=<dir>] [journal=true|false] [journal_address=<email>] [debug=true|false] "
+              "[attachment_path=<path>|attachment_size=<size>] [attachment_count=<n>] "
+              "[attachment_filename=<name>] [attachment_mime_type=<mime>]")
         sys.exit(1)
     main()
