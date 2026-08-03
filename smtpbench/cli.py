@@ -209,7 +209,7 @@ def log_json(logger, status, thread_id, message_id, duration, error=None, attemp
         "retry_number": retry_number,
         "mx_host_used": mx_host_used,
         "recipients": recipients,
-        "attachments": attachments or [],
+        "attachments": [{k: v for k, v in a.items() if k != "content"} for a in (attachments or [])],
         "error": str(error) if error else None
     }
     logger.info(json.dumps(entry))
