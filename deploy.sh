@@ -77,19 +77,24 @@ echo -e "${GREEN}✓ Cleaned${NC}"
 echo ""
 
 echo -e "${BLUE}Step 2: Linting${NC}"
-if command -v ruff &> /dev/null; then
-    if ! ruff check .; then
-        echo -e "${RED}✗ Lint failed. Aborting deployment.${NC}"
-        exit 1
-    fi
-    if ! ruff format --check .; then
-        echo -e "${RED}✗ Formatting check failed. Run 'ruff format .'. Aborting deployment.${NC}"
-        exit 1
-    fi
-    echo -e "${GREEN}✓ Lint and formatting passed${NC}"
+# Resolve ruff from the same environment used for the build/upload steps below.
+if [ -d ".venv" ] && [ -x ".venv/bin/ruff" ]; then
+    RUFF=".venv/bin/ruff"
+elif [ ! -d ".venv" ] && command -v ruff &> /dev/null; then
+    RUFF="ruff"
 else
-    echo -e "${YELLOW}⚠ ruff not found, skipping lint${NC}"
+    echo -e "${RED}✗ ruff not found in the deployment environment. Install it with 'pip install .[dev]'. Aborting deployment.${NC}"
+    exit 1
 fi
+if ! "$RUFF" check .; then
+    echo -e "${RED}✗ Lint failed. Aborting deployment.${NC}"
+    exit 1
+fi
+if ! "$RUFF" format --check .; then
+    echo -e "${RED}✗ Formatting check failed. Run '$RUFF format .'. Aborting deployment.${NC}"
+    exit 1
+fi
+echo -e "${GREEN}✓ Lint and formatting passed${NC}"
 echo ""
 
 echo -e "${BLUE}Step 3: Running tests${NC}"

@@ -1,5 +1,7 @@
 """Integration tests for SMTPBench using local test mail server"""
 
+import glob
+import json
 import mailbox
 import os
 import re
@@ -8,6 +10,23 @@ import subprocess
 import time
 
 import pytest
+
+
+def get_current_run_uuid(log_dir="logs"):
+    """Return the run UUID from the most recent success log, or None if unavailable.
+
+    Mirrors validate_mbox.get_current_run_uuid but resolves the pytest-side log
+    directory (./logs) and stays quiet so callers can assert on the result.
+    """
+    success_logs = glob.glob(os.path.join(log_dir, "success_*.log"))
+    if not success_logs:
+        return None
+    latest_log = max(success_logs, key=os.path.getmtime)
+    try:
+        with open(latest_log) as f:
+            return json.loads(f.readline()).get("run_uuid")
+    except (OSError, ValueError):
+        return None
 
 
 def fix_mbox_permissions(mbox_path="test-mail/root"):
@@ -108,30 +127,39 @@ def test_smtpbench_sends_emails(docker_compose_setup):
         f"Expected at least {expected_messages} messages, found {message_count}"
     )
 
+    # Scope validation to the current invocation's run UUID so stale messages
+    # from earlier runs in the shared mbox can't satisfy the assertions.
+    run_uuid = get_current_run_uuid()
+    assert run_uuid, "Could not determine current run UUID from success logs"
+
     # Validate message content
     smtpbench_messages = 0
-    run_uuids = set()
 
     for message in mbox:
         subject = message.get("Subject", "")
         from_addr = message.get("From", "")
         to_addr = message.get("To", "")
+        header_uuid = message.get("X-SMTPBench-Run-UUID", "")
 
-        # Check if it's from SMTPBench (look for the UUID in brackets)
-        uuid_match = re.search(r"\[([a-f0-9\-]+)\]", subject)
-        if uuid_match and "Quick test from thread" in subject:
+        if "Quick test from thread" not in subject:
+            continue
+
+        # Prefer the header UUID; fall back to the one embedded in the subject.
+        msg_uuid = header_uuid
+        if not msg_uuid:
+            uuid_match = re.search(r"\[([a-f0-9\-]+)\]", subject)
+            msg_uuid = uuid_match.group(1) if uuid_match else ""
+
+        if msg_uuid == run_uuid:
             smtpbench_messages += 1
-            run_uuids.add(uuid_match.group(1))
 
             # Validate from and to addresses
             assert "loadtest@local.ingest.lets.qa" in from_addr
             assert "test@local.ingest.lets.qa" in to_addr
 
     assert smtpbench_messages >= expected_messages, (
-        f"Expected {expected_messages} SMTPBench messages, found {smtpbench_messages}"
+        f"Expected {expected_messages} messages from run {run_uuid}, found {smtpbench_messages}"
     )
-
-    assert len(run_uuids) > 0, "No run UUIDs found in messages"
 
     # Verify logs were created
     assert os.path.exists("logs"), "Logs directory not found"
@@ -144,28 +172,34 @@ def test_smtpbench_message_format(docker_compose_setup):
     """Test that SMTPBench messages have correct format"""
 
     # Run SMTPBench with minimal messages
-    subprocess.run(
+    result = subprocess.run(
         ["docker", "compose", "-f", "docker-compose.test.yml", "up", "--build", "smtpbench"],
         capture_output=True,
+        text=True,
     )
+    assert result.returncode == 0, f"SMTPBench failed: {result.stderr}"
 
     time.sleep(5)
+
+    # Scope to the current invocation's run UUID so a stale message can't be
+    # the one we inspect.
+    run_uuid = get_current_run_uuid()
+    assert run_uuid, "Could not determine current run UUID from success logs"
 
     mbox_path = "test-mail/root"
     # Fix permissions on mbox file
     fix_mbox_permissions(mbox_path)
     mbox = mailbox.mbox(mbox_path)
 
-    # Check first message format
+    # Check the current run's message format
     for message in mbox:
-        if "Quick test" in message.get("Subject", ""):
+        if message.get("X-SMTPBench-Run-UUID") == run_uuid:
             # Validate headers
             assert message.get("From") is not None
             assert message.get("To") is not None
             assert message.get("Subject") is not None
 
             # Validate custom headers
-            assert message.get("X-SMTPBench-Run-UUID") is not None
             assert message.get("X-SMTPBench-Thread-ID") is not None
             assert message.get("X-SMTPBench-Message-ID") is not None
 
@@ -186,7 +220,7 @@ def test_smtpbench_message_format(docker_compose_setup):
 
             break
     else:
-        pytest.fail("No SMTPBench messages found")
+        pytest.fail(f"No messages found for current run {run_uuid}")
 
 
 @pytest.mark.integration
@@ -194,31 +228,32 @@ def test_smtpbench_logs_created(docker_compose_setup):
     """Test that SMTPBench creates proper log files"""
 
     # Run SMTPBench
-    subprocess.run(
+    result = subprocess.run(
         ["docker", "compose", "-f", "docker-compose.test.yml", "up", "--build", "smtpbench"],
         capture_output=True,
+        text=True,
     )
+    assert result.returncode == 0, f"SMTPBench failed: {result.stderr}"
 
     time.sleep(5)
 
     # Check log directory exists
     assert os.path.exists("logs"), "Logs directory not found"
 
-    log_files = os.listdir("logs")
-    assert len(log_files) > 0, "No log files created"
+    # Scope to the log file for this invocation's run UUID; the log filename
+    # embeds the run UUID (success_TIMESTAMP_UUID.log).
+    run_uuid = get_current_run_uuid()
+    assert run_uuid, "Could not determine current run UUID from success logs"
 
-    # Should have at least a success log
-    success_logs = [f for f in log_files if "success" in f]
-    assert len(success_logs) > 0, "No success log file found"
+    success_logs = glob.glob(os.path.join("logs", f"success_*_{run_uuid}.log"))
+    assert success_logs, f"No success log file found for current run {run_uuid}"
 
     # Validate log file format (should contain JSON)
-    success_log_path = os.path.join("logs", success_logs[0])
+    success_log_path = success_logs[0]
     with open(success_log_path) as f:
         first_line = f.readline()
         assert first_line.strip(), "Log file is empty"
         # Should be valid JSON (would raise exception if not)
-        import json
-
         log_entry = json.loads(first_line)
 
         # Validate required fields
@@ -233,6 +268,9 @@ def test_smtpbench_logs_created(docker_compose_setup):
         ]
         for field in required_fields:
             assert field in log_entry, f"Missing required field: {field}"
+
+        # The log entry's run_uuid must match the current run.
+        assert log_entry["run_uuid"] == run_uuid
 
 
 if __name__ == "__main__":

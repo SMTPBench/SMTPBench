@@ -100,12 +100,26 @@ def validate_mbox(mbox_path="/var/mail/root", expected_messages=10, run_uuid=Non
                     f"❌ FAIL: Expected {expected_messages} messages from current run, found {current_run_messages}"
                 )
                 return False
-        else:
+        elif os.environ.get("ALLOW_UNSCOPED_VALIDATION") == "true":
+            # Explicit manual opt-in: validate against all SMTPBench messages,
+            # accepting the risk of false positives from prior runs.
+            print(
+                "⚠️  ALLOW_UNSCOPED_VALIDATION=true: validating all messages (may include prior runs)"
+            )
             if smtpbench_messages < expected_messages:
                 print(
                     f"❌ FAIL: Expected {expected_messages} SMTPBench messages, found {smtpbench_messages}"
                 )
                 return False
+        else:
+            # Fail closed: without a run UUID we cannot distinguish this run's
+            # messages from stale ones. Set ALLOW_UNSCOPED_VALIDATION=true to
+            # opt into unscoped validation.
+            print(
+                "❌ FAIL: No current run UUID available; cannot scope validation. "
+                "Set ALLOW_UNSCOPED_VALIDATION=true to validate all messages."
+            )
+            return False
 
         if run_uuid:
             print("\n✅ SUCCESS: All validations passed for current run!")

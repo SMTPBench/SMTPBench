@@ -11,7 +11,8 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 
 @pytest.fixture(autouse=True)
 def reset_globals():
-    """Reset global variables before each test"""
+    """Reset the mutable CLI counters and run state (success/fail/retry counts,
+    stop flag, and mx_hosts) before and after each test."""
     from smtpbench import cli
 
     # Reset global counters
