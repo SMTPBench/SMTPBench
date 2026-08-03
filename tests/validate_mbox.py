@@ -14,7 +14,12 @@ import sys
 
 
 def get_current_run_uuid():
-    """Extract the run UUID from the latest SMTPBench success log."""
+    """
+    Identify the run UUID recorded in the most recently modified SMTPBench success log.
+    
+    Returns:
+        str or None: The recorded run UUID, or `None` when no success log is available or its contents cannot be parsed.
+    """
     log_dir = os.environ.get("LOG_DIR", "/logs")
 
     # Find the most recent success log
@@ -39,7 +44,17 @@ def get_current_run_uuid():
 
 
 def validate_mbox(mbox_path="/var/mail/root", expected_messages=10, run_uuid=None):
-    """Validate the mbox file contains expected messages from SMTPBench."""
+    """
+    Validate an mbox file for the expected number of SMTPBench messages.
+    
+    Parameters:
+        mbox_path (str): Path to the mbox file.
+        expected_messages (int): Minimum number of messages required.
+        run_uuid (str | None): UUID used to restrict validation to messages from a specific run.
+    
+    Returns:
+        bool: `True` if the required messages are present, `False` if validation fails or the file cannot be read.
+    """
 
     if not os.path.exists(mbox_path):
         print(f"❌ FAIL: mbox file not found at {mbox_path}")

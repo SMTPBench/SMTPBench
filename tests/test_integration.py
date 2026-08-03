@@ -11,7 +11,12 @@ import pytest
 
 
 def fix_mbox_permissions(mbox_path="test-mail/root"):
-    """Fix permissions on mbox file created by Docker"""
+    """
+    Ensure the mail spool file is readable after it is created by Docker.
+    
+    Parameters:
+        mbox_path (str): Path to the mail spool file whose permissions should be fixed.
+    """
     if not os.path.exists(mbox_path) or os.path.getsize(mbox_path) == 0:
         return
 
@@ -44,7 +49,7 @@ def fix_mbox_permissions(mbox_path="test-mail/root"):
 
 @pytest.fixture(scope="module")
 def docker_compose_setup():
-    """Set up and tear down Docker Compose services for integration tests"""
+    """Set up Docker Compose services and test artifacts for integration tests, then clean them up afterward."""
     # Clean up any previous test artifacts
     for path in ["test-mail", "logs"]:
         if os.path.exists(path):
@@ -141,7 +146,9 @@ def test_smtpbench_sends_emails(docker_compose_setup):
 
 @pytest.mark.integration
 def test_smtpbench_message_format(docker_compose_setup):
-    """Test that SMTPBench messages have correct format"""
+    """
+    Verify that SMTPBench messages use the expected headers, subject structure, and body content.
+    """
 
     # Run SMTPBench with minimal messages
     subprocess.run(

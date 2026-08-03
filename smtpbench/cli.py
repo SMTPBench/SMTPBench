@@ -151,7 +151,16 @@ def show_help():
 
 
 def parse_args():
-    """Parse key=value style arguments into a dictionary."""
+    """
+    Parse command-line arguments in key=value format.
+    
+    Returns:
+        dict: A mapping of argument names to trimmed values.
+    
+    Raises:
+        SystemExit: If a version or help option is requested, no arguments are
+            provided, or an argument does not use the key=value format.
+    """
     # Check for version flag
     if any(arg.lower() in ["-v", "--version", "version"] for arg in sys.argv[1:]):
         print(
@@ -179,7 +188,11 @@ def parse_args():
 
 
 def setup_logging():
-    """Setup separate JSON loggers for success, fail, retry, and debug."""
+    """Configure file-based loggers for successful sends, failures, retries, and debugging.
+    
+    Returns:
+        dict[str, logging.Logger]: The configured success, fail, and retry loggers.
+    """
     global debug_logger
     loggers = {}
     for name in ["success", "fail", "retry"]:
@@ -217,7 +230,15 @@ def log_json(
     recipients=None,
     attachments=None,
 ):
-    """Log structured JSON for each transaction."""
+    """
+    Record transaction details as a structured JSON log entry.
+    
+    Parameters:
+    	status: Transaction status.
+    	duration: Transaction duration in seconds.
+    	error: Optional error associated with the transaction.
+    	attachments: Optional attachment metadata to include in the log.
+    """
     entry = {
         "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime()),
         "run_uuid": run_uuid,
@@ -239,7 +260,18 @@ def log_json(
 
 
 def mx_lookup_all(recipient):
-    """Perform MX lookup for recipient's domain and return all MX hosts sorted by priority."""
+    """
+    Resolve all MX hosts for the recipient's domain in priority order.
+    
+    Parameters:
+    	recipient (str): Recipient email address whose domain is queried.
+    
+    Returns:
+    	list[str]: MX hostnames sorted by ascending priority.
+    
+    Exits:
+    	Exits with status 1 if the recipient is invalid, no MX records are found, or the lookup fails.
+    """
     try:
         domain = recipient.split("@")[1]
     except IndexError:
@@ -265,7 +297,15 @@ def mx_lookup_all(recipient):
 
 
 def color_rate(rate):
-    """Return colored string for success rate."""
+    """
+    Format a success rate with a color indicating its level.
+    
+    Parameters:
+    	rate (float): The success rate as a percentage.
+    
+    Returns:
+    	str: The percentage formatted to one decimal place with green, yellow, or red terminal coloring.
+    """
     if rate >= 90:
         return Fore.GREEN + f"{rate:.1f}%" + Style.RESET_ALL
     elif rate >= 70:
@@ -374,7 +414,19 @@ def attachment_metadata(attachment_configs):
 
 
 def create_message(recipient, from_address, thread_id, message_id, attachment_configs=None):
-    """Create a tracked SMTPBench MIME message with optional attachments."""
+    """
+    Create a tracked MIME email message with optional attachments.
+    
+    Parameters:
+        recipient (str): Email address of the recipient.
+        from_address (str): Email address of the sender.
+        thread_id: Identifier of the sending thread.
+        message_id: Identifier of the message.
+        attachment_configs (list, optional): Attachment metadata and content to include.
+    
+    Returns:
+        MIMEMultipart: The constructed MIME email message.
+    """
     subject = f"Quick test from thread {thread_id} message {message_id} [{run_uuid}]"
     body = f"{subject}\n\n--\nSMTPBench Load Testing Tool\nhttps://github.com/SMTPBench/SMTPBench"
 
@@ -404,7 +456,20 @@ def create_message(recipient, from_address, thread_id, message_id, attachment_co
 
 
 def try_send_to_mx_hosts(from_address, recipients, msg, port, use_tls, transaction_timeout):
-    """Try sending to each MX host in order until one succeeds."""
+    """
+    Send an email through MX hosts in priority order.
+    
+    Parameters:
+        from_address (str): Sender email address.
+        recipients (list[str]): Recipient email addresses.
+        msg: MIME message to send.
+        port (int): SMTP port.
+        use_tls (bool): Whether to enable STARTTLS.
+        transaction_timeout (float): SMTP operation timeout in seconds.
+    
+    Returns:
+        tuple: The successful MX hostname and `None`, or `None` and the last error if all hosts fail.
+    """
     last_error = None
     for host in mx_hosts:
         try:
@@ -443,7 +508,18 @@ def send_email(
     progress_bar,
     attachment_configs=None,
 ):
-    """Send a single test email, trying all MX hosts if needed."""
+    """
+    Send one test email with retry handling across the recipient's MX hosts.
+    
+    Parameters:
+        recipient (str): Email address of the primary recipient.
+        from_address (str): Sender email address.
+        thread_id: Identifier of the worker thread sending the message.
+        message_id: Identifier of the test message.
+        retry_delay (float): Delay between failed delivery attempts, in seconds.
+        max_retries (int): Maximum number of retries after the initial attempt.
+        attachment_configs: Optional attachment definitions included in the message.
+    """
     global success_count, fail_count, retry_count, stop_requested, journal_enabled, journal_address
 
     msg = create_message(recipient, from_address, thread_id, message_id, attachment_configs)
@@ -541,7 +617,15 @@ def worker(
     progress_bar,
     attachment_configs=None,
 ):
-    """Worker thread to send multiple messages."""
+    """
+    Send messages repeatedly until the configured limit is reached or stopping is requested.
+    
+    Parameters:
+        messages_per_thread (int): Maximum number of messages to send; values less than or equal to zero allow continuous sending.
+        delay (float): Fixed delay in seconds between messages when random_delay is false.
+        random_delay (bool): Whether to use a random delay between messages.
+        attachment_configs (optional): Attachment definitions included in each message.
+    """
     message_id = 1
     while not stop_requested:
         if messages_per_thread > 0 and message_id > messages_per_thread:
@@ -577,7 +661,18 @@ def signal_handler(sig, frame):
 
 
 def check_smtp_banner(host, port, use_tls, transaction_timeout):
-    """Check SMTP connectivity and banner before starting the test."""
+    """
+    Verify SMTP connectivity and the server greeting before starting the load test.
+    
+    Parameters:
+        host (str): SMTP server hostname or address.
+        port (int): SMTP server port.
+        use_tls (bool): Whether to establish STARTTLS before rechecking EHLO.
+        transaction_timeout (float): Timeout in seconds for SMTP operations.
+    
+    Raises:
+        SystemExit: If the connection, initial EHLO, STARTTLS negotiation, or post-TLS EHLO check fails.
+    """
     try:
         if debug_enabled:
             debug_logger.debug(f"Performing SMTP banner check on {host}:{port}")
@@ -617,6 +712,13 @@ def check_smtp_banner(host, port, use_tls, transaction_timeout):
 
 
 def main():
+    """
+    Run the configured SMTP load test and report its results.
+    
+    The function prepares logging, resolves SMTP hosts, validates attachments,
+    performs a pre-flight connection check, starts worker threads, and displays
+    run statistics.
+    """
     global \
         stop_requested, \
         client_hostname, \
