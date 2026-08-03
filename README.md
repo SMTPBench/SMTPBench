@@ -442,8 +442,27 @@ smtpbench \
 ```bash
 git clone https://github.com/SMTPBench/SMTPBench.git
 cd SMTPBench
-pip install -e .
-pip install pytest
+pip install -e ".[dev]"
+```
+
+This installs the runtime dependencies plus the dev tools (`pytest` and `ruff`).
+
+### Linting and Formatting
+
+SMTPBench uses [Ruff](https://docs.astral.sh/ruff/) for both linting and formatting:
+
+```bash
+# Lint
+ruff check .
+
+# Lint and auto-fix
+ruff check . --fix
+
+# Format code
+ruff format .
+
+# Check formatting without changing files (as CI does)
+ruff format --check .
 ```
 
 ### Running Tests
@@ -484,7 +503,8 @@ pytest -v
 
 ### CI/CD
 
-Tests run automatically on pull requests via GitHub Actions:
+Checks run automatically on pull requests via GitHub Actions:
+- **Lint** - Ruff lint and format checks
 - **Unit tests** - Fast tests without external dependencies
 - **Integration tests** - Full end-to-end tests with Docker Compose
 

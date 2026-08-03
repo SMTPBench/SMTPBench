@@ -76,7 +76,23 @@ rm -rf dist/ build/ *.egg-info
 echo -e "${GREEN}✓ Cleaned${NC}"
 echo ""
 
-echo -e "${BLUE}Step 2: Running tests${NC}"
+echo -e "${BLUE}Step 2: Linting${NC}"
+if command -v ruff &> /dev/null; then
+    if ! ruff check .; then
+        echo -e "${RED}✗ Lint failed. Aborting deployment.${NC}"
+        exit 1
+    fi
+    if ! ruff format --check .; then
+        echo -e "${RED}✗ Formatting check failed. Run 'ruff format .'. Aborting deployment.${NC}"
+        exit 1
+    fi
+    echo -e "${GREEN}✓ Lint and formatting passed${NC}"
+else
+    echo -e "${YELLOW}⚠ ruff not found, skipping lint${NC}"
+fi
+echo ""
+
+echo -e "${BLUE}Step 3: Running tests${NC}"
 if command -v pytest &> /dev/null; then
     pytest -v -m "not integration" --tb=short
     if [ $? -ne 0 ]; then
@@ -89,7 +105,7 @@ else
 fi
 echo ""
 
-echo -e "${BLUE}Step 3: Building package${NC}"
+echo -e "${BLUE}Step 4: Building package${NC}"
 if [ -d ".venv" ]; then
     .venv/bin/python -m build
 else
@@ -98,7 +114,7 @@ fi
 echo -e "${GREEN}✓ Built${NC}"
 echo ""
 
-echo -e "${BLUE}Step 4: Checking package${NC}"
+echo -e "${BLUE}Step 5: Checking package${NC}"
 if [ -d ".venv" ]; then
     .venv/bin/twine check dist/*
 else
@@ -140,7 +156,7 @@ upload_to_repo() {
 # Deploy based on selection
 case $DEPLOY_TARGET in
     1)
-        echo -e "${BLUE}Step 5: Deploying to TestPyPI${NC}"
+        echo -e "${BLUE}Step 6: Deploying to TestPyPI${NC}"
         upload_to_repo "testpypi" "TestPyPI"
         if [ $? -eq 0 ]; then
             echo ""
@@ -153,7 +169,7 @@ case $DEPLOY_TARGET in
         fi
         ;;
     2)
-        echo -e "${BLUE}Step 5: Deploying to PyPI${NC}"
+        echo -e "${BLUE}Step 6: Deploying to PyPI${NC}"
         echo -e "${YELLOW}⚠ This will publish to production PyPI!${NC}"
         read -p "Are you sure? (yes/N) " -r
         echo
@@ -178,7 +194,7 @@ case $DEPLOY_TARGET in
         fi
         ;;
     3)
-        echo -e "${BLUE}Step 5a: Deploying to TestPyPI${NC}"
+        echo -e "${BLUE}Step 6a: Deploying to TestPyPI${NC}"
         upload_to_repo "testpypi" "TestPyPI"
         if [ $? -ne 0 ]; then
             exit 1
@@ -193,7 +209,7 @@ case $DEPLOY_TARGET in
         echo
         
         if [[ $REPLY == "yes" ]]; then
-            echo -e "${BLUE}Step 5b: Deploying to PyPI${NC}"
+            echo -e "${BLUE}Step 6b: Deploying to PyPI${NC}"
             upload_to_repo "" "PyPI"
             if [ $? -eq 0 ]; then
                 echo ""
