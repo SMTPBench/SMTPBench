@@ -1010,7 +1010,9 @@ def main():
 
     loggers = setup_logging()
 
-    # Pre-flight SMTP banner check on first MX host
+    # Pre-flight SMTP banner check on first MX host. Print the TLS mode first so
+    # it's visible even when the banner check aborts (it's what the check uses).
+    print(f"[INFO] TLS mode: {tls_mode}")
     print(f"[INFO] Performing SMTP banner check on {mx_hosts[0]}:{port}...")
     check_smtp_banner(mx_hosts[0], port, tls_mode, transaction_timeout)
 
@@ -1021,7 +1023,6 @@ def main():
 
     print(f"[INFO] Run UUID: {run_uuid}")
     print(f"[INFO] Client Hostname: {client_hostname}")
-    print(f"[INFO] TLS mode: {tls_mode}")
     print(f"[INFO] Authentication: {'enabled' if auth_username else 'disabled'}")
     print(f"[INFO] Logs will be saved in: {os.path.abspath(log_dir)}")
     if journal_enabled:
