@@ -494,5 +494,45 @@ class TestRangeParsing:
             parse_count_range("5-2")
 
 
+class TestTLSMode:
+    """Test TLS transport mode resolution."""
+
+    def test_default_is_starttls(self):
+        from smtpbench.cli import resolve_tls_mode
+
+        assert resolve_tls_mode({}, 587) == "starttls"
+
+    def test_port_465_defaults_to_ssl(self):
+        from smtpbench.cli import resolve_tls_mode
+
+        assert resolve_tls_mode({}, 465) == "ssl"
+
+    def test_explicit_mode_overrides_465_default(self):
+        from smtpbench.cli import resolve_tls_mode
+
+        assert resolve_tls_mode({"tls_mode": "starttls"}, 465) == "starttls"
+
+    def test_use_tls_alias_true(self):
+        from smtpbench.cli import resolve_tls_mode
+
+        assert resolve_tls_mode({"use_tls": "true"}, 587) == "starttls"
+
+    def test_use_tls_alias_false(self):
+        from smtpbench.cli import resolve_tls_mode
+
+        assert resolve_tls_mode({"use_tls": "false"}, 587) == "none"
+
+    def test_tls_mode_wins_over_use_tls(self):
+        from smtpbench.cli import resolve_tls_mode
+
+        assert resolve_tls_mode({"tls_mode": "none", "use_tls": "true"}, 587) == "none"
+
+    def test_invalid_mode_raises(self):
+        from smtpbench.cli import resolve_tls_mode
+
+        with pytest.raises(ValueError):
+            resolve_tls_mode({"tls_mode": "bogus"}, 587)
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

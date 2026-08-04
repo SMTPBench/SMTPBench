@@ -80,7 +80,8 @@ def show_help():
 {Fore.GREEN}OPTIONAL PARAMETERS:{Style.RESET_ALL}
     {Fore.YELLOW}lb_host{Style.RESET_ALL}=HOSTNAME         Load balancer/SMTP host (skips MX lookup)
     {Fore.YELLOW}from_address{Style.RESET_ALL}=EMAIL       Sender email address (default: no-reply@localhost)
-    {Fore.YELLOW}use_tls{Style.RESET_ALL}=BOOL             Enable TLS/STARTTLS (default: true)
+    {Fore.YELLOW}tls_mode{Style.RESET_ALL}=MODE             starttls|ssl|none (default: starttls; ssl auto on 465)
+    {Fore.YELLOW}use_tls{Style.RESET_ALL}=BOOL             DEPRECATED alias for tls_mode (true→starttls, false→none)
     {Fore.YELLOW}delay{Style.RESET_ALL}=SECONDS            Fixed delay between messages (default: 0)
     {Fore.YELLOW}random_delay{Style.RESET_ALL}=BOOL        Random 1-15 second delay (default: false)
     {Fore.YELLOW}retry_delay{Style.RESET_ALL}=SECONDS      Wait time between retries (default: 20)
@@ -559,30 +560,65 @@ def create_message(recipient, from_address, thread_id, message_id, attachment_co
     return msg
 
 
-def try_send_to_mx_hosts(from_address, recipients, msg, port, use_tls, transaction_timeout):
-    """Try sending to each MX host in order until one succeeds."""
+TLS_MODES = ("starttls", "ssl", "none")
+
+
+def resolve_tls_mode(args, port):
+    """Resolve the effective TLS transport mode (starttls | ssl | none)."""
+    explicit = args.get("tls_mode")
+    legacy = args.get("use_tls")
+
+    if explicit is not None:
+        mode = explicit.strip().lower()
+        if mode not in TLS_MODES:
+            raise ValueError(f"Invalid tls_mode '{explicit}'; valid values: {', '.join(TLS_MODES)}")
+        if legacy is not None:
+            print(f"{Fore.YELLOW}⚠ Both tls_mode and use_tls set; tls_mode wins.{Style.RESET_ALL}")
+        return mode
+
+    if legacy is not None:
+        print(
+            f"{Fore.YELLOW}⚠ use_tls is deprecated; use tls_mode=starttls|ssl|none.{Style.RESET_ALL}"
+        )
+        return "starttls" if legacy.strip().lower() == "true" else "none"
+
+    return "ssl" if port == 465 else "starttls"
+
+
+def try_send_to_mx_hosts(from_address, recipients, msg, port, tls_mode, transaction_timeout):
+    """Try sending to each MX host in order until one succeeds.
+
+    Returns (host, error). On total failure, host is the last host attempted
+    (or None if there were no hosts) and error is the last exception.
+    """
     last_error = None
+    last_host = None
     for host in mx_hosts:
+        last_host = host
         try:
             if debug_enabled:
                 debug_logger.debug(f"Attempting connection to MX host: {host}:{port}")
-            with smtplib.SMTP(host, port, timeout=transaction_timeout) as server:
+            if tls_mode == "ssl":
+                connection = smtplib.SMTP_SSL(host, port, timeout=transaction_timeout)
+            else:
+                connection = smtplib.SMTP(host, port, timeout=transaction_timeout)
+            with connection as server:
                 if debug_enabled:
-                    server.set_debuglevel(1)  # Enable smtplib debug output
-                if use_tls:
+                    server.set_debuglevel(1)
+                if tls_mode == "starttls":
                     if debug_enabled:
                         debug_logger.debug("Starting TLS...")
                     server.starttls()
                 if debug_enabled:
                     debug_logger.debug(f"Sending email to recipients: {recipients}")
                 server.sendmail(from_address, recipients, msg.as_string())
-            return host, None  # Success
+            return host, None
         except Exception as e:
             last_error = e
             if debug_enabled:
                 debug_logger.debug(f"Error sending to {host}: {traceback.format_exc()}")
             continue
-    return None, last_error  # All MX hosts failed
+    return last_host, last_error
 
 
 def send_email(
@@ -593,7 +629,7 @@ def send_email(
     message_id,
     retry_delay,
     loggers,
-    use_tls,
+    tls_mode,
     transaction_timeout,
     max_retries,
     progress_bar,
@@ -615,7 +651,7 @@ def send_email(
         attempt += 1
         start_time = time.time()
         mx_host_used, error = try_send_to_mx_hosts(
-            from_address, recipients, msg, port, use_tls, transaction_timeout
+            from_address, recipients, msg, port, tls_mode, transaction_timeout
         )
 
         if error is None:
@@ -690,7 +726,7 @@ def worker(
     messages_per_thread,
     retry_delay,
     loggers,
-    use_tls,
+    tls_mode,
     delay,
     random_delay,
     transaction_timeout,
@@ -710,7 +746,7 @@ def worker(
             message_id,
             retry_delay,
             loggers,
-            use_tls,
+            tls_mode,
             transaction_timeout,
             max_retries,
             progress_bar,
@@ -731,12 +767,16 @@ def signal_handler(sig, frame):
     stop_requested = True
 
 
-def check_smtp_banner(host, port, use_tls, transaction_timeout):
+def check_smtp_banner(host, port, tls_mode, transaction_timeout):
     """Check SMTP connectivity and banner before starting the test."""
     try:
         if debug_enabled:
             debug_logger.debug(f"Performing SMTP banner check on {host}:{port}")
-        with smtplib.SMTP(host, port, timeout=transaction_timeout) as server:
+        if tls_mode == "ssl":
+            connection = smtplib.SMTP_SSL(host, port, timeout=transaction_timeout)
+        else:
+            connection = smtplib.SMTP(host, port, timeout=transaction_timeout)
+        with connection as server:
             if debug_enabled:
                 server.set_debuglevel(1)
             code, banner = server.ehlo()
@@ -747,7 +787,7 @@ def check_smtp_banner(host, port, use_tls, transaction_timeout):
                 if debug_enabled:
                     debug_logger.debug(f"SMTP banner check failed: Code={code}, Banner={banner}")
                 sys.exit(1)
-            if use_tls:
+            if tls_mode == "starttls":
                 server.starttls()
                 code, banner = server.ehlo()
                 if code != 250:
@@ -814,7 +854,7 @@ def main():
     threads_count = int(args["threads"])
     messages_per_thread = int(args["messages"])
     retry_delay = int(args.get("retry_delay", 20))
-    use_tls = args.get("use_tls", "true").lower() == "true"
+    tls_mode = resolve_tls_mode(args, port)
     delay = int(args.get("delay", 0))
     random_delay = args.get("random_delay", "false").lower() == "true"
     transaction_timeout = int(args.get("transaction_timeout", 20))
@@ -833,7 +873,7 @@ def main():
 
     # Pre-flight SMTP banner check on first MX host
     print(f"[INFO] Performing SMTP banner check on {mx_hosts[0]}:{port}...")
-    check_smtp_banner(mx_hosts[0], port, use_tls, transaction_timeout)
+    check_smtp_banner(mx_hosts[0], port, tls_mode, transaction_timeout)
 
     signal.signal(signal.SIGINT, signal_handler)
 
@@ -842,6 +882,7 @@ def main():
 
     print(f"[INFO] Run UUID: {run_uuid}")
     print(f"[INFO] Client Hostname: {client_hostname}")
+    print(f"[INFO] TLS mode: {tls_mode}")
     print(f"[INFO] Logs will be saved in: {os.path.abspath(log_dir)}")
     if journal_enabled:
         print(f"[INFO] Journal mode enabled. Journal address: {journal_address}")
@@ -876,7 +917,7 @@ def main():
                 messages_per_thread,
                 retry_delay,
                 loggers,
-                use_tls,
+                tls_mode,
                 delay,
                 random_delay,
                 transaction_timeout,
