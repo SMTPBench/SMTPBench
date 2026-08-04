@@ -54,3 +54,9 @@ coverage.xml
 
 # Ignore test-mail files or folders
 test-mail
+
+# Git worktrees (isolated workspaces)
+.worktrees/
+
+# Subagent-driven-development scratch (ledgers, briefs, review packages)
+.superpowers/
