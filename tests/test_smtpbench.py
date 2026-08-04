@@ -385,5 +385,47 @@ class TestIntegration:
         assert isinstance(log_entry, dict)
 
 
+class TestRangeParsing:
+    """Test range-aware attachment size and count parsers."""
+
+    def test_parse_size_range_single_value(self):
+        from smtpbench.cli import parse_size_range
+
+        assert parse_size_range("512KB") == (512 * 1024, 512 * 1024)
+
+    def test_parse_size_range_span(self):
+        from smtpbench.cli import parse_size_range
+
+        assert parse_size_range("10KB-2MB") == (10 * 1024, 2 * 1024 * 1024)
+
+    def test_parse_size_range_rejects_inverted(self):
+        from smtpbench.cli import parse_size_range
+
+        with pytest.raises(ValueError):
+            parse_size_range("2MB-10KB")
+
+    def test_parse_count_range_single_value(self):
+        from smtpbench.cli import parse_count_range
+
+        assert parse_count_range("3") == (3, 3)
+
+    def test_parse_count_range_span(self):
+        from smtpbench.cli import parse_count_range
+
+        assert parse_count_range("1-3") == (1, 3)
+
+    def test_parse_count_range_rejects_zero(self):
+        from smtpbench.cli import parse_count_range
+
+        with pytest.raises(ValueError):
+            parse_count_range("0-2")
+
+    def test_parse_count_range_rejects_inverted(self):
+        from smtpbench.cli import parse_count_range
+
+        with pytest.raises(ValueError):
+            parse_count_range("5-2")
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

@@ -297,6 +297,46 @@ def parse_size(size_value):
     return int(number) * SIZE_UNITS[unit]
 
 
+def parse_size_range(value):
+    """Parse an attachment size spec into (min_bytes, max_bytes).
+
+    Accepts a single size ("512KB") or a hyphenated range ("10KB-2MB").
+    """
+    text = str(value).strip()
+    if "-" in text:
+        low_text, high_text = text.split("-", 1)
+        low = parse_size(low_text)
+        high = parse_size(high_text)
+    else:
+        low = high = parse_size(text)
+    if low > high:
+        raise ValueError(f"Invalid attachment size range (min > max): {value}")
+    return low, high
+
+
+def parse_count_range(value):
+    """Parse an attachment count spec into (min_count, max_count).
+
+    Accepts a single count ("3") or a hyphenated range ("1-3"). Counts are
+    integers of at least 1.
+    """
+    text = str(value).strip()
+    try:
+        if "-" in text:
+            low_text, high_text = text.split("-", 1)
+            low = int(low_text)
+            high = int(high_text)
+        else:
+            low = high = int(text)
+    except ValueError as exc:
+        raise ValueError(f"Invalid attachment count: {value}") from exc
+    if low < 1:
+        raise ValueError(f"attachment_count must be at least 1: {value}")
+    if low > high:
+        raise ValueError(f"Invalid attachment count range (min > max): {value}")
+    return low, high
+
+
 def numbered_filename(filename, index, total):
     """Append a stable counter before a filename extension when needed."""
     if total == 1:
