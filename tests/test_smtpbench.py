@@ -534,5 +534,73 @@ class TestTLSMode:
             resolve_tls_mode({"tls_mode": "bogus"}, 587)
 
 
+class TestCredentials:
+    """Test SMTP credential resolution order and redaction."""
+
+    def test_cli_credentials_win(self, monkeypatch):
+        from smtpbench.cli import resolve_credentials
+
+        monkeypatch.setenv("SMTPBENCH_USER", "envuser")
+        monkeypatch.setenv("SMTPBENCH_PASS", "envpass")
+        user, password, source = resolve_credentials({"username": "cliuser", "password": "clipass"})
+        assert (user, password, source) == ("cliuser", "clipass", "cli")
+
+    def test_env_credentials_used_when_no_cli(self, monkeypatch):
+        from smtpbench.cli import resolve_credentials
+
+        monkeypatch.setenv("SMTPBENCH_USER", "envuser")
+        monkeypatch.setenv("SMTPBENCH_PASS", "envpass")
+        user, password, source = resolve_credentials({})
+        assert (user, password, source) == ("envuser", "envpass", "env")
+
+    def test_no_credentials(self, monkeypatch):
+        from smtpbench.cli import resolve_credentials
+
+        monkeypatch.delenv("SMTPBENCH_USER", raising=False)
+        monkeypatch.delenv("SMTPBENCH_PASS", raising=False)
+        assert resolve_credentials({}) == (None, None, None)
+
+    def test_login_called_when_username_set(self):
+        from unittest.mock import MagicMock
+
+        from smtpbench import cli
+        from smtpbench.cli import create_message, try_send_to_mx_hosts
+
+        cli.mx_hosts = ["mx.example.com"]
+        cli.auth_username = "user"
+        cli.auth_password = "secret"
+        fake_server = MagicMock()
+        # context manager returns the server itself
+        cm = MagicMock()
+        cm.__enter__.return_value = fake_server
+        cm.__exit__.return_value = False
+        with patch("smtplib.SMTP", return_value=cm) as smtp_ctor:
+            msg = create_message("to@example.com", "from@example.com", 1, 1, [])
+            host, error = try_send_to_mx_hosts(
+                "from@example.com", ["to@example.com"], msg, 587, "starttls", 20
+            )
+        assert error is None
+        assert smtp_ctor.called
+        fake_server.login.assert_called_once_with("user", "secret")
+
+    def test_login_not_called_without_username(self):
+        from unittest.mock import MagicMock
+
+        from smtpbench import cli
+        from smtpbench.cli import create_message, try_send_to_mx_hosts
+
+        cli.mx_hosts = ["mx.example.com"]
+        cli.auth_username = None
+        cli.auth_password = None
+        fake_server = MagicMock()
+        cm = MagicMock()
+        cm.__enter__.return_value = fake_server
+        cm.__exit__.return_value = False
+        with patch("smtplib.SMTP", return_value=cm):
+            msg = create_message("to@example.com", "from@example.com", 1, 1, [])
+            try_send_to_mx_hosts("from@example.com", ["to@example.com"], msg, 587, "none", 20)
+        fake_server.login.assert_not_called()
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

@@ -22,6 +22,8 @@ def reset_globals():
     cli.stop_requested = False
     cli.mx_hosts = []
     cli.attachment_plan = None
+    cli.auth_username = None
+    cli.auth_password = None
 
     yield
 
@@ -32,6 +34,8 @@ def reset_globals():
     cli.stop_requested = False
     cli.mx_hosts = []
     cli.attachment_plan = None
+    cli.auth_username = None
+    cli.auth_password = None
 
 
 @pytest.fixture

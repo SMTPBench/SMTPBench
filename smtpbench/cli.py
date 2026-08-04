@@ -21,6 +21,7 @@ from email.utils import formatdate
 import dns.resolver
 from colorama import Fore, Style
 from colorama import init as colorama_init
+from dotenv import load_dotenv
 from tqdm import tqdm
 
 # Import version from package
@@ -47,6 +48,8 @@ journal_address = None
 debug_enabled = False
 debug_logger = None
 attachment_plan = None  # AttachmentPlan or None, built once in main()
+auth_username = None
+auth_password = None
 
 SIZE_UNITS = {
     "B": 1,
@@ -97,6 +100,9 @@ def show_help():
     {Fore.YELLOW}attachment_count{Style.RESET_ALL}=NUMBER  Number of generated attachments (default: 1)
     {Fore.YELLOW}attachment_filename{Style.RESET_ALL}=NAME Filename for static/generated attachment(s)
     {Fore.YELLOW}attachment_mime_type{Style.RESET_ALL}=MIME MIME type override for attachment(s)
+    {Fore.YELLOW}username{Style.RESET_ALL}=USER             SMTP AUTH username (prefer env/.env over CLI)
+    {Fore.YELLOW}password{Style.RESET_ALL}=PASS             SMTP AUTH password (prefer env/.env over CLI)
+    {Fore.YELLOW}dotenv_path{Style.RESET_ALL}=PATH          Path to a .env file (default: .env in cwd)
 
 {Fore.YELLOW}ATTACHMENT SAFETY:{Style.RESET_ALL}
     Attachments multiply outbound volume. SMTPBench prints estimated total
@@ -563,6 +569,23 @@ def create_message(recipient, from_address, thread_id, message_id, attachment_co
 TLS_MODES = ("starttls", "ssl", "none")
 
 
+def resolve_credentials(args):
+    """Resolve SMTP credentials. Precedence: CLI > environment (incl. .env).
+
+    Returns (username, password, source) where source is "cli", "env", or None.
+    Assumes load_dotenv() has already populated os.environ from any .env file.
+    """
+    cli_user = args.get("username")
+    cli_pass = args.get("password")
+    if cli_user or cli_pass:
+        return cli_user, cli_pass, "cli"
+    env_user = os.environ.get("SMTPBENCH_USER")
+    env_pass = os.environ.get("SMTPBENCH_PASS")
+    if env_user or env_pass:
+        return env_user, env_pass, "env"
+    return None, None, None
+
+
 def resolve_tls_mode(args, port):
     """Resolve the effective TLS transport mode (starttls | ssl | none)."""
     explicit = args.get("tls_mode")
@@ -609,6 +632,8 @@ def try_send_to_mx_hosts(from_address, recipients, msg, port, tls_mode, transact
                     if debug_enabled:
                         debug_logger.debug("Starting TLS...")
                     server.starttls()
+                if auth_username:
+                    server.login(auth_username, auth_password)
                 if debug_enabled:
                     debug_logger.debug(f"Sending email to recipients: {recipients}")
                 server.sendmail(from_address, recipients, msg.as_string())
@@ -820,8 +845,11 @@ def main():
         journal_enabled, \
         journal_address, \
         debug_enabled, \
-        attachment_plan
+        attachment_plan, \
+        auth_username, \
+        auth_password
     args = parse_args()
+    load_dotenv(dotenv_path=args.get("dotenv_path"))
 
     required = ["recipient", "port", "threads", "messages"]
     missing = [key for key in required if key not in args]
@@ -863,6 +891,12 @@ def main():
     journal_enabled = args.get("journal", "false").lower() == "true"
     journal_address = args.get("journal_address", recipient)
     debug_enabled = args.get("debug", "false").lower() == "true"
+    auth_username, auth_password, cred_source = resolve_credentials(args)
+    if cred_source == "cli":
+        print(
+            f"{Fore.YELLOW}⚠ Credentials passed on the CLI are visible in ps/top and shell "
+            f"history; prefer SMTPBENCH_USER/SMTPBENCH_PASS or a .env file.{Style.RESET_ALL}"
+        )
     try:
         attachment_plan = build_attachment_plan(args)
     except Exception as e:
@@ -883,6 +917,7 @@ def main():
     print(f"[INFO] Run UUID: {run_uuid}")
     print(f"[INFO] Client Hostname: {client_hostname}")
     print(f"[INFO] TLS mode: {tls_mode}")
+    print(f"[INFO] Authentication: {'enabled' if auth_username else 'disabled'}")
     print(f"[INFO] Logs will be saved in: {os.path.abspath(log_dir)}")
     if journal_enabled:
         print(f"[INFO] Journal mode enabled. Journal address: {journal_address}")
@@ -953,7 +988,8 @@ if __name__ == "__main__":
             "[random_delay=true|false] [transaction_timeout=<sec>] [max_retries=<n>] [client_hostname=<name>] "
             "[logfile_output=<dir>] [journal=true|false] [journal_address=<email>] [debug=true|false] "
             "[attachment_path=<path>|attachment_size=<size>] [attachment_count=<n>] "
-            "[attachment_filename=<name>] [attachment_mime_type=<mime>]"
+            "[attachment_filename=<name>] [attachment_mime_type=<mime>] "
+            "[username=<user>] [password=<pass>] [dotenv_path=<path>]"
         )
         sys.exit(1)
     main()
