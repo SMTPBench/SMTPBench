@@ -629,5 +629,63 @@ class TestRateLimiter:
         assert time.monotonic() - start < 0.2
 
 
+class TestSummary:
+    """Test the run summary artifact."""
+
+    def test_compute_percentiles_empty(self):
+        from smtpbench.cli import compute_percentiles
+
+        assert compute_percentiles([]) is None
+
+    def test_compute_percentiles_single_sample(self):
+        from smtpbench.cli import compute_percentiles
+
+        result = compute_percentiles([0.2])  # 200 ms
+        assert result == {"p50": 200, "p95": 200, "p99": 200, "max": 200}
+
+    def test_compute_percentiles_vector(self):
+        from smtpbench.cli import compute_percentiles
+
+        samples = [i / 1000 for i in range(1, 101)]  # 1ms..100ms
+        result = compute_percentiles(samples)
+        assert result["max"] == 100
+        assert 45 <= result["p50"] <= 55
+        assert result["p95"] >= result["p50"]
+        assert result["p99"] >= result["p95"]
+
+    def test_record_result_updates_store(self):
+        from smtpbench import cli
+        from smtpbench.cli import record_result
+
+        record_result(True, 0.1, "mx1.example.com")
+        record_result(False, 0.2, "mx1.example.com")
+        assert cli.latency_samples == [0.1]
+        assert cli.per_mx_stats["mx1.example.com"] == {"sent": 1, "failed": 1}
+
+    def test_write_summary_produces_valid_json(self, tmp_path):
+        import json
+
+        from smtpbench import cli
+        from smtpbench.cli import write_summary
+
+        cli.log_dir = str(tmp_path)
+        cli.success_count = 3
+        cli.fail_count = 1
+        cli.retry_count = 2
+        cli.latency_samples = [0.1, 0.2, 0.3]
+        cli.per_mx_stats = {"mx1": {"sent": 3, "failed": 1}}
+        config = {"threads": 2, "messages": 2, "tls_mode": "starttls", "auth": True, "port": 587}
+        path = write_summary(config, 12.5)
+        with open(path) as f:
+            data = json.load(f)
+        assert data["run_uuid"] == cli.run_uuid
+        assert data["totals"]["sent"] == 3
+        assert data["totals"]["failed"] == 1
+        assert data["config"]["auth"] is True
+        assert "password" not in json.dumps(data)
+        assert data["latency_ms"]["max"] == 300
+        assert data["per_mx"]["mx1"] == {"sent": 3, "failed": 1}
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

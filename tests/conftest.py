@@ -25,6 +25,8 @@ def reset_globals():
     cli.auth_username = None
     cli.auth_password = None
     cli.rate_limiter = None
+    cli.latency_samples = []
+    cli.per_mx_stats = {}
 
     yield
 
@@ -38,6 +40,8 @@ def reset_globals():
     cli.auth_username = None
     cli.auth_password = None
     cli.rate_limiter = None
+    cli.latency_samples = []
+    cli.per_mx_stats = {}
 
 
 @pytest.fixture

@@ -6,6 +6,7 @@ import random
 import signal
 import smtplib
 import socket
+import statistics
 import sys
 import threading
 import time
@@ -51,6 +52,8 @@ attachment_plan = None  # AttachmentPlan or None, built once in main()
 auth_username = None
 auth_password = None
 rate_limiter = None  # TokenBucket or None, built in main()
+latency_samples = []  # durations (seconds) of successful sends
+per_mx_stats = {}  # host -> {"sent": int, "failed": int}
 
 SIZE_UNITS = {
     "B": 1,
@@ -282,6 +285,58 @@ def color_rate(rate):
         return Fore.YELLOW + f"{rate:.1f}%" + Style.RESET_ALL
     else:
         return Fore.RED + f"{rate:.1f}%" + Style.RESET_ALL
+
+
+def record_result(success, duration, host):
+    """Record one send outcome into the summary store (thread-safe)."""
+    key = host or "unknown"
+    with lock:
+        if success:
+            latency_samples.append(duration)
+        bucket = per_mx_stats.setdefault(key, {"sent": 0, "failed": 0})
+        bucket["sent" if success else "failed"] += 1
+
+
+def compute_percentiles(samples):
+    """Return p50/p95/p99/max in milliseconds, or None for an empty list."""
+    if not samples:
+        return None
+    ms = [s * 1000 for s in samples]
+    if len(ms) == 1:
+        value = round(ms[0])
+        return {"p50": value, "p95": value, "p99": value, "max": value}
+    cut = statistics.quantiles(ms, n=100, method="inclusive")  # 99 cut points
+    return {
+        "p50": round(cut[49]),
+        "p95": round(cut[94]),
+        "p99": round(cut[98]),
+        "max": round(max(ms)),
+    }
+
+
+def write_summary(config, elapsed_seconds):
+    """Write summary_{timestamp}_{uuid}.json into log_dir; return its path."""
+    total_attempts = success_count + fail_count
+    success_rate = (success_count / total_attempts * 100) if total_attempts > 0 else 0
+    summary = {
+        "run_uuid": run_uuid,
+        "client_hostname": client_hostname,
+        "started_at": run_timestamp,
+        "elapsed_seconds": round(elapsed_seconds, 2),
+        "config": config,
+        "totals": {
+            "sent": success_count,
+            "failed": fail_count,
+            "retried": retry_count,
+            "success_rate": round(success_rate, 1),
+        },
+        "latency_ms": compute_percentiles(latency_samples),
+        "per_mx": per_mx_stats,
+    }
+    path = os.path.join(log_dir, f"summary_{run_timestamp}_{run_uuid}.json")
+    with open(path, "w") as summary_file:
+        json.dump(summary, summary_file, indent=2)
+    return path
 
 
 def parse_size(size_value):
@@ -716,6 +771,7 @@ def send_email(
                 progress_bar.set_postfix(
                     Success=success_count, Fail=fail_count, Rate=color_rate(success_rate)
                 )
+            record_result(True, duration, mx_host_used)
             log_json(
                 loggers["success"],
                 "success",
@@ -768,6 +824,7 @@ def send_email(
                 )
                 time.sleep(retry_delay)
             else:
+                record_result(False, duration, mx_host_used)
                 return
 
 
@@ -1026,6 +1083,17 @@ def main():
     print(f"Total Retried: {retry_count}")
     print(f"Elapsed Time: {elapsed:.2f} seconds")
     print(f"Logs saved in: {os.path.abspath(log_dir)}")
+
+    summary_config = {
+        "threads": threads_count,
+        "messages": messages_per_thread,
+        "rate": float(args["rate"]) if args.get("rate") else None,
+        "tls_mode": tls_mode,
+        "auth": auth_username is not None,
+        "port": port,
+    }
+    summary_path = write_summary(summary_config, elapsed)
+    print(f"Summary written to: {summary_path}")
 
 
 if __name__ == "__main__":
