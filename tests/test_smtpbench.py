@@ -1,13 +1,13 @@
 """Unit tests for SMTPBench"""
 
 import json
+import random
 import sys
 from unittest.mock import Mock, patch
 
 import pytest
 
 from smtpbench.cli import (
-    build_attachment_configs,
     color_rate,
     create_message,
     log_json,
@@ -99,43 +99,14 @@ class TestColorRate:
 class TestAttachments:
     """Test attachment configuration and MIME construction"""
 
-    def test_build_attachment_configs_for_static_file(self, tmp_path):
-        """Static attachment files are captured with name, size, MIME type, and bytes."""
-        attachment = tmp_path / "sample.txt"
-        attachment.write_text("hello attachment", encoding="utf-8")
-
-        configs = build_attachment_configs({"attachment_path": str(attachment)})
-
-        assert len(configs) == 1
-        assert configs[0]["filename"] == "sample.txt"
-        assert configs[0]["size_bytes"] == len("hello attachment")
-        assert configs[0]["mime_type"] == "text/plain"
-        assert configs[0]["source"] == "file"
-        assert configs[0]["content"] == b"hello attachment"
-
-    def test_build_attachment_configs_generates_requested_size(self):
-        """Synthetic attachments are generated at the requested size."""
-        configs = build_attachment_configs(
-            {
-                "attachment_size": "2KB",
-                "attachment_count": "2",
-                "attachment_filename": "payload.bin",
-                "attachment_mime_type": "application/octet-stream",
-            }
-        )
-
-        assert len(configs) == 2
-        assert [config["filename"] for config in configs] == ["payload-1.bin", "payload-2.bin"]
-        assert all(config["size_bytes"] == 2048 for config in configs)
-        assert all(config["mime_type"] == "application/octet-stream" for config in configs)
-        assert all(config["source"] == "generated" for config in configs)
-        assert all(len(config["content"]) == 2048 for config in configs)
-
     def test_create_message_attaches_files_and_preserves_tracking_headers(self, tmp_path):
         """Attachment-enabled messages remain multipart and keep SMTPBench headers."""
+        from smtpbench.cli import build_attachment_plan
+
         attachment = tmp_path / "evidence.txt"
         attachment.write_text("payload", encoding="utf-8")
-        attachment_configs = build_attachment_configs({"attachment_path": str(attachment)})
+        plan = build_attachment_plan({"attachment_path": str(attachment)})
+        attachment_configs = plan.select_for_message(random.Random("seed"))
 
         message = create_message(
             recipient="test@local.lets.qa",
@@ -153,6 +124,102 @@ class TestAttachments:
         assert parts[1].get_filename() == "evidence.txt"
         assert parts[1].get_content_type() == "text/plain"
         assert parts[1].get_payload(decode=True) == b"payload"
+
+
+class TestAttachmentPlan:
+    """Test per-message attachment selection."""
+
+    def test_no_attachment_args_returns_none(self):
+        from smtpbench.cli import build_attachment_plan
+
+        assert build_attachment_plan({}) is None
+
+    def test_static_path_selected_every_message(self, tmp_path):
+        from smtpbench.cli import build_attachment_plan
+
+        f = tmp_path / "sample.pdf"
+        f.write_bytes(b"hello world")
+        plan = build_attachment_plan({"attachment_path": str(f)})
+        rng = random.Random("seed")
+        configs = plan.select_for_message(rng)
+        assert len(configs) == 1
+        assert configs[0]["filename"] == "sample.pdf"
+        assert configs[0]["size_bytes"] == len(b"hello world")
+        assert configs[0]["source"] == "file"
+        assert configs[0]["content"] == b"hello world"
+
+    def test_conflicting_modes_rejected(self, tmp_path):
+        from smtpbench.cli import build_attachment_plan
+
+        with pytest.raises(ValueError):
+            build_attachment_plan(
+                {"attachment_path": str(tmp_path / "x"), "attachment_size": "1KB"}
+            )
+
+    def test_count_with_path_rejected(self, tmp_path):
+        from smtpbench.cli import build_attachment_plan
+
+        f = tmp_path / "s.bin"
+        f.write_bytes(b"x")
+        with pytest.raises(ValueError):
+            build_attachment_plan({"attachment_path": str(f), "attachment_count": "2"})
+
+    def test_size_range_bounds_and_count(self):
+        from smtpbench.cli import build_attachment_plan
+
+        plan = build_attachment_plan({"attachment_size": "1KB-2KB", "attachment_count": "2-2"})
+        rng = random.Random("seed")
+        configs = plan.select_for_message(rng)
+        assert len(configs) == 2
+        for c in configs:
+            assert 1024 <= c["size_bytes"] <= 2048
+            assert c["source"] == "generated"
+            assert len(c["content"]) == c["size_bytes"]
+
+    def test_probability_zero_yields_no_attachments(self):
+        from smtpbench.cli import build_attachment_plan
+
+        plan = build_attachment_plan({"attachment_size": "1KB", "attachment_probability": "0"})
+        assert plan.select_for_message(random.Random("seed")) == []
+
+    def test_selection_is_deterministic_for_same_seed(self):
+        from smtpbench.cli import build_attachment_plan
+
+        plan = build_attachment_plan({"attachment_size": "1KB-9KB", "attachment_count": "1-3"})
+        a = plan.select_for_message(random.Random("run:1:1"))
+        b = plan.select_for_message(random.Random("run:1:1"))
+        assert [c["size_bytes"] for c in a] == [c["size_bytes"] for c in b]
+
+    def test_dir_mode_reads_corpus_and_caps_count(self, tmp_path):
+        from smtpbench.cli import build_attachment_plan
+
+        (tmp_path / "a.txt").write_bytes(b"aaa")
+        (tmp_path / "b.txt").write_bytes(b"bbbb")
+        plan = build_attachment_plan({"attachment_dir": str(tmp_path), "attachment_count": "5-5"})
+        configs = plan.select_for_message(random.Random("seed"))
+        # count is capped at corpus size (2 files)
+        assert len(configs) == 2
+        assert {c["filename"] for c in configs} == {"a.txt", "b.txt"}
+        assert all(c["source"] == "dir" for c in configs)
+
+    def test_empty_dir_rejected(self, tmp_path):
+        from smtpbench.cli import build_attachment_plan
+
+        with pytest.raises(ValueError):
+            build_attachment_plan({"attachment_dir": str(tmp_path)})
+
+    def test_expected_bytes_per_message(self):
+        from smtpbench.cli import build_attachment_plan
+
+        plan = build_attachment_plan(
+            {
+                "attachment_size": "1000-3000",
+                "attachment_count": "1-3",
+                "attachment_probability": "0.5",
+            }
+        )
+        # 0.5 * mean_count(2) * mean_size(2000) = 2000
+        assert plan.expected_bytes_per_message() == pytest.approx(2000.0)
 
 
 class TestLogJSON:

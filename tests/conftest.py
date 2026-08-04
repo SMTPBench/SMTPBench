@@ -21,6 +21,7 @@ def reset_globals():
     cli.retry_count = 0
     cli.stop_requested = False
     cli.mx_hosts = []
+    cli.attachment_plan = None
 
     yield
 
@@ -30,6 +31,7 @@ def reset_globals():
     cli.retry_count = 0
     cli.stop_requested = False
     cli.mx_hosts = []
+    cli.attachment_plan = None
 
 
 @pytest.fixture

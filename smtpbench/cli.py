@@ -46,6 +46,7 @@ journal_enabled = False
 journal_address = None
 debug_enabled = False
 debug_logger = None
+attachment_plan = None  # AttachmentPlan or None, built once in main()
 
 SIZE_UNITS = {
     "B": 1,
@@ -345,25 +346,101 @@ def numbered_filename(filename, index, total):
     return f"{root}-{index}{extension}"
 
 
-def build_attachment_configs(args):
-    """Build attachment configurations from CLI arguments."""
+class AttachmentPlan:
+    """Per-message attachment selection for one of three exclusive modes."""
+
+    def __init__(self, mode, *, probability, count_range, filename, mime_type):
+        self.mode = mode  # "path" | "size" | "dir"
+        self.probability = probability
+        self.count_min, self.count_max = count_range
+        self.filename = filename
+        self.mime_type = mime_type
+        # mode-specific payload, populated by build_attachment_plan
+        self.static_config = None  # for "path"
+        self.size_min = self.size_max = 0  # for "size"
+        self.corpus = []  # for "dir": list of config dicts (with content)
+
+    def _mean_count(self):
+        return (self.count_min + self.count_max) / 2
+
+    def expected_bytes_per_message(self):
+        if self.mode == "path":
+            return float(self.static_config["size_bytes"])
+        if self.mode == "size":
+            mean_size = (self.size_min + self.size_max) / 2
+            return self.probability * self._mean_count() * mean_size
+        # dir
+        mean_size = sum(c["size_bytes"] for c in self.corpus) / len(self.corpus)
+        capped_mean_count = min(self._mean_count(), len(self.corpus))
+        return self.probability * capped_mean_count * mean_size
+
+    def file_count_label(self):
+        if self.mode == "path":
+            return "1 static file"
+        if self.mode == "size":
+            return f"generated, size {self.size_min}-{self.size_max} bytes, count {self.count_min}-{self.count_max}"
+        return f"dir corpus of {len(self.corpus)} file(s), count {self.count_min}-{self.count_max}"
+
+    def select_for_message(self, rng):
+        """Return the attachment config list for one message (may be empty)."""
+        if self.mode == "path":
+            return [dict(self.static_config)]
+
+        if rng.random() >= self.probability:
+            return []
+        count = rng.randint(self.count_min, self.count_max)
+
+        if self.mode == "size":
+            configs = []
+            for index in range(1, count + 1):
+                size_bytes = rng.randint(self.size_min, self.size_max)
+                configs.append(
+                    {
+                        "filename": numbered_filename(self.filename, index, count),
+                        "size_bytes": size_bytes,
+                        "mime_type": self.mime_type,
+                        "source": "generated",
+                        "content": b"0" * size_bytes,
+                    }
+                )
+            return configs
+
+        # dir
+        count = min(count, len(self.corpus))
+        chosen = rng.sample(self.corpus, count)
+        return [dict(config) for config in chosen]
+
+
+def build_attachment_plan(args):
+    """Build an AttachmentPlan from CLI args, or None if no attachment args given."""
     attachment_path = args.get("attachment_path")
     attachment_size = args.get("attachment_size")
+    attachment_dir = args.get("attachment_dir")
 
-    if not attachment_path and not attachment_size:
-        return []
-    if attachment_path and attachment_size:
-        raise ValueError("Use either attachment_path or attachment_size, not both")
-
-    attachment_count = int(args.get("attachment_count", 1))
-    if attachment_count < 1:
-        raise ValueError("attachment_count must be at least 1")
+    modes_given = [
+        name
+        for name, value in (
+            ("attachment_path", attachment_path),
+            ("attachment_size", attachment_size),
+            ("attachment_dir", attachment_dir),
+        )
+        if value
+    ]
+    if not modes_given:
+        return None
+    if len(modes_given) > 1:
+        raise ValueError(f"attachment modes are mutually exclusive; got: {', '.join(modes_given)}")
 
     mime_type_override = args.get("attachment_mime_type")
+    probability = float(args.get("attachment_probability", "1.0"))
+    if not 0.0 <= probability <= 1.0:
+        raise ValueError("attachment_probability must be between 0 and 1")
 
     if attachment_path:
-        if attachment_count != 1:
-            raise ValueError("attachment_count is only supported with generated attachments")
+        if "attachment_count" in args or "attachment_probability" in args:
+            raise ValueError(
+                "attachment_count/attachment_probability are not supported with attachment_path"
+            )
         if not os.path.isfile(attachment_path):
             raise FileNotFoundError(f"Attachment file not found: {attachment_path}")
         filename = args.get("attachment_filename", os.path.basename(attachment_path))
@@ -372,32 +449,71 @@ def build_attachment_configs(args):
         )
         with open(attachment_path, "rb") as attachment_file:
             content = attachment_file.read()
-        return [
-            {
-                "filename": filename,
-                "size_bytes": len(content),
-                "mime_type": mime_type,
-                "source": "file",
-                "content": content,
-            }
-        ]
-
-    size_bytes = parse_size(attachment_size)
-    base_filename = args.get("attachment_filename", "attachment.bin")
-    mime_type = (
-        mime_type_override or mimetypes.guess_type(base_filename)[0] or "application/octet-stream"
-    )
-    content = b"0" * size_bytes
-    return [
-        {
-            "filename": numbered_filename(base_filename, index, attachment_count),
-            "size_bytes": size_bytes,
+        plan = AttachmentPlan(
+            "path", probability=1.0, count_range=(1, 1), filename=filename, mime_type=mime_type
+        )
+        plan.static_config = {
+            "filename": filename,
+            "size_bytes": len(content),
             "mime_type": mime_type,
-            "source": "generated",
+            "source": "file",
             "content": content,
         }
-        for index in range(1, attachment_count + 1)
-    ]
+        return plan
+
+    count_range = parse_count_range(args.get("attachment_count", "1"))
+
+    if attachment_size:
+        size_min, size_max = parse_size_range(attachment_size)
+        base_filename = args.get("attachment_filename", "attachment.bin")
+        mime_type = (
+            mime_type_override
+            or mimetypes.guess_type(base_filename)[0]
+            or "application/octet-stream"
+        )
+        plan = AttachmentPlan(
+            "size",
+            probability=probability,
+            count_range=count_range,
+            filename=base_filename,
+            mime_type=mime_type,
+        )
+        plan.size_min, plan.size_max = size_min, size_max
+        return plan
+
+    # attachment_dir
+    if not os.path.isdir(attachment_dir):
+        raise NotADirectoryError(f"Attachment directory not found: {attachment_dir}")
+    corpus = []
+    for entry in sorted(os.listdir(attachment_dir)):
+        full = os.path.join(attachment_dir, entry)
+        if not os.path.isfile(full):
+            continue
+        with open(full, "rb") as corpus_file:
+            content = corpus_file.read()
+        mime_type = (
+            mime_type_override or mimetypes.guess_type(entry)[0] or "application/octet-stream"
+        )
+        corpus.append(
+            {
+                "filename": entry,
+                "size_bytes": len(content),
+                "mime_type": mime_type,
+                "source": "dir",
+                "content": content,
+            }
+        )
+    if not corpus:
+        raise ValueError(f"Attachment directory is empty or unreadable: {attachment_dir}")
+    plan = AttachmentPlan(
+        "dir",
+        probability=probability,
+        count_range=count_range,
+        filename=None,
+        mime_type=mime_type_override,
+    )
+    plan.corpus = corpus
+    return plan
 
 
 def attachment_metadata(attachment_configs):
@@ -481,13 +597,14 @@ def send_email(
     transaction_timeout,
     max_retries,
     progress_bar,
-    attachment_configs=None,
 ):
     """Send a single test email, trying all MX hosts if needed."""
     global success_count, fail_count, retry_count, stop_requested, journal_enabled, journal_address
 
+    rng = random.Random(f"{run_uuid}:{thread_id}:{message_id}")
+    attachment_configs = attachment_plan.select_for_message(rng) if attachment_plan else []
     msg = create_message(recipient, from_address, thread_id, message_id, attachment_configs)
-    attachments = attachment_metadata(attachment_configs or [])
+    attachments = attachment_metadata(attachment_configs)
 
     recipients = [recipient]
     if journal_enabled and journal_address:
@@ -579,7 +696,6 @@ def worker(
     transaction_timeout,
     max_retries,
     progress_bar,
-    attachment_configs=None,
 ):
     """Worker thread to send multiple messages."""
     message_id = 1
@@ -598,7 +714,6 @@ def worker(
             transaction_timeout,
             max_retries,
             progress_bar,
-            attachment_configs,
         )
         progress_bar.update(1)
 
@@ -664,7 +779,8 @@ def main():
         log_dir, \
         journal_enabled, \
         journal_address, \
-        debug_enabled
+        debug_enabled, \
+        attachment_plan
     args = parse_args()
 
     required = ["recipient", "port", "threads", "messages"]
@@ -708,7 +824,7 @@ def main():
     journal_address = args.get("journal_address", recipient)
     debug_enabled = args.get("debug", "false").lower() == "true"
     try:
-        attachment_configs = build_attachment_configs(args)
+        attachment_plan = build_attachment_plan(args)
     except Exception as e:
         print(f"{Fore.RED}✗ Attachment configuration error: {e}{Style.RESET_ALL}")
         sys.exit(1)
@@ -733,15 +849,18 @@ def main():
         print(
             f"[INFO] Debug mode enabled. Debug log: {os.path.join(log_dir, f'debug_{run_timestamp}_{run_uuid}.log')}"
         )
-    if attachment_configs:
-        total_attachment_bytes = sum(config["size_bytes"] for config in attachment_configs)
-        estimated_total_bytes = (
-            total_attachment_bytes * total_messages if total_messages else "unbounded"
+    if attachment_plan:
+        expected_per_message = attachment_plan.expected_bytes_per_message()
+        estimated_total = (
+            f"{int(expected_per_message * total_messages)} bytes (expected)"
+            if total_messages
+            else "unbounded"
         )
+        print(f"[INFO] Attachments enabled: {attachment_plan.file_count_label()}")
         print(
-            f"[INFO] Attachments enabled: {len(attachment_configs)} file(s), {total_attachment_bytes} bytes per message"
+            f"[INFO] Estimated attachment payload: {int(expected_per_message)} bytes/msg; "
+            f"total {estimated_total}"
         )
-        print(f"[INFO] Estimated total attachment payload: {estimated_total_bytes} bytes")
 
     threads = []
     start_time = time.time()
@@ -763,7 +882,6 @@ def main():
                 transaction_timeout,
                 max_retries,
                 progress_bar,
-                attachment_configs,
             ),
         )
         threads.append(thread)
