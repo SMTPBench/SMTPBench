@@ -273,5 +273,48 @@ def test_smtpbench_logs_created(docker_compose_setup):
         assert log_entry["run_uuid"] == run_uuid
 
 
+@pytest.mark.integration
+def test_smtpbench_summary_artifact(docker_compose_setup):
+    """Test that SMTPBench writes a valid summary JSON artifact for the current run."""
+
+    # Run SMTPBench
+    result = subprocess.run(
+        ["docker", "compose", "-f", "docker-compose.test.yml", "up", "--build", "smtpbench"],
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, f"SMTPBench failed: {result.stderr}"
+
+    time.sleep(5)
+
+    # Scope to the current invocation's run UUID so a stale summary file from
+    # an earlier run in the shared log directory can't satisfy the assertion.
+    run_uuid = get_current_run_uuid()
+    assert run_uuid, "Could not determine current run UUID from success logs"
+
+    # The summary file is named summary_{timestamp}_{uuid}.json
+    summary_files = glob.glob(os.path.join("logs", f"summary_*_{run_uuid}.json"))
+    assert summary_files, f"No summary file found for current run {run_uuid}"
+
+    summary_path = summary_files[0]
+    with open(summary_path) as f:
+        summary = json.load(f)
+
+    # Top-level run_uuid must match the current run
+    assert summary.get("run_uuid") == run_uuid, (
+        f"Summary run_uuid {summary.get('run_uuid')!r} != expected {run_uuid!r}"
+    )
+
+    # Required top-level keys
+    for key in ("client_hostname", "started_at", "elapsed_seconds", "config", "totals", "per_mx"):
+        assert key in summary, f"Summary missing required key: {key}"
+
+    # latency_ms is None when no messages succeeded, otherwise a dict with percentile keys
+    latency = summary.get("latency_ms")
+    if latency is not None:
+        for pct_key in ("p50", "p95", "p99", "max"):
+            assert pct_key in latency, f"latency_ms missing key: {pct_key}"
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v", "-m", "integration"])

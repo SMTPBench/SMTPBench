@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.0] - 2026-08-04
+
+### Added
+- **SMTP AUTH**: `username=`/`password=` with resolution order CLI > environment (`SMTPBENCH_USER`/`SMTPBENCH_PASS`) > `.env` (via `python-dotenv`, path overridable with `dotenv_path=`). Credentials are never written to logs, the summary, or terminal output beyond a one-line warning when passed on the CLI.
+- **TLS transport modes**: `tls_mode=starttls|ssl|none` (default `starttls`; `ssl` auto-selected on port 465). This fixes implicit-TLS submission on port 465, which previously never used `SMTP_SSL`. `use_tls=` is retained as a soft-deprecated alias.
+- **Whole-run rate cap**: `rate=` (messages/sec) enforced by a shared token bucket across all threads. Mutually exclusive with `delay=`/`random_delay=`.
+- **Attachment realism**: `attachment_size=` accepts a range (`10KB-2MB`); new `attachment_dir=` samples a corpus directory with `attachment_probability=` and `attachment_count=A-B`. Per-message selection is seeded from the run UUID for reproducibility. The three attachment modes are mutually exclusive.
+- **Summary artifact**: `summary_{timestamp}_{uuid}.json` in the log directory with config, totals, latency percentiles (p50/p95/p99/max, via stdlib `statistics`), and per-MX sent/failed counts.
+
+### Changed
+- **Development status**: promoted from Beta to Production/Stable.
+
+### Dependencies
+- Added `python-dotenv>=1.0.0`.
+
 ## [1.1.1] - 2026-08-03
 
 ### Added

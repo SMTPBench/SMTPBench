@@ -206,10 +206,96 @@ smtpbench --help
 | `journal_address` | *(same as recipient)* | Email address for journal copies |
 | `debug` | `false` | Enable debug logging |
 | `attachment_path` | *(none)* | Attach a specific file to every message |
-| `attachment_size` | *(none)* | Generate synthetic attachment(s) of a given size (`512KB`, `1MB`, etc.) |
-| `attachment_count` | `1` | Number of generated attachments per message |
+| `attachment_size` | *(none)* | Generate synthetic attachment(s); accepts a fixed size or range (`512KB`, `10KB-2MB`) |
+| `attachment_dir` | *(none)* | Sample attachments from a corpus directory (mutually exclusive with `attachment_path`/`attachment_size`) |
+| `attachment_probability` | `1.0` | Probability (0.0–1.0) that any given message gets an attachment (used with `attachment_size`/`attachment_dir`) |
+| `attachment_count` | `1` | Number of attachments per message; accepts a range (`1-3`) |
 | `attachment_filename` | source/generated name | Override attachment filename (`payload.bin` becomes `payload-1.bin`, `payload-2.bin`, etc. when count > 1) |
 | `attachment_mime_type` | auto-detected / `application/octet-stream` | Override attachment MIME type |
+| `tls_mode` | `starttls` (or `ssl` on port 465) | TLS transport: `starttls`, `ssl`, or `none`. Use `ssl` for port 465 implicit-TLS. `use_tls=` is a deprecated alias. |
+| `rate` | *(none)* | Whole-run cap in messages/sec, enforced by a shared token bucket. Mutually exclusive with `delay=`/`random_delay=`. |
+| `username` | *(none)* | SMTP AUTH username. Prefer `SMTPBENCH_USER` env var or `.env` over CLI (CLI credentials are visible in `ps`/shell history). |
+| `password` | *(none)* | SMTP AUTH password. Prefer `SMTPBENCH_PASS` env var or `.env` over CLI. |
+| `dotenv_path` | `.env` | Path to a `.env` file for credential resolution (default: `.env` in current directory). |
+
+### SMTP Authentication
+
+SMTPBench resolves credentials in this order: **CLI arguments → environment variables → `.env` file**.
+
+Preferred — set environment variables or use a `.env` file so credentials are not visible in process listings:
+
+```bash
+# Via environment variables
+export SMTPBENCH_USER=myuser
+export SMTPBENCH_PASS=mypassword
+smtpbench recipient=test@example.com port=587 threads=5 messages=10
+
+# Or via a .env file (default path: .env in current directory)
+echo "SMTPBENCH_USER=myuser" >> .env
+echo "SMTPBENCH_PASS=mypassword" >> .env
+smtpbench recipient=test@example.com port=587 threads=5 messages=10
+
+# Custom .env path
+smtpbench recipient=test@example.com port=587 threads=5 messages=10 dotenv_path=/etc/smtpbench.env
+```
+
+Discouraged — passing credentials on the CLI makes them visible in `ps`, `top`, and shell history:
+
+```bash
+# ⚠ Credentials visible in ps/shell history — prefer env/.env instead
+smtpbench recipient=test@example.com port=587 threads=5 messages=10 \
+    username=myuser password=mypassword
+```
+
+SMTPBench prints a warning when credentials are supplied this way.
+
+### TLS Modes
+
+Use `tls_mode=` to control the TLS transport. The default is `starttls` (upgrade an initially plain connection); port 465 defaults to `ssl` (implicit TLS from the start):
+
+```bash
+# STARTTLS on port 587 (default)
+smtpbench recipient=test@example.com port=587 threads=5 messages=10 tls_mode=starttls
+
+# Implicit SSL on port 465
+smtpbench recipient=test@example.com port=465 threads=5 messages=10 tls_mode=ssl
+
+# Plain (no TLS)
+smtpbench recipient=test@example.com port=25 threads=5 messages=10 tls_mode=none
+```
+
+The `use_tls=true/false` flag is a deprecated alias for `tls_mode=starttls/none`.
+
+### Rate Limiting
+
+Cap the whole-run throughput with `rate=` (messages/sec). The limit is enforced by a shared token bucket across all threads and is mutually exclusive with `delay=`/`random_delay=`:
+
+```bash
+# Cap at 10 messages/sec across all threads
+smtpbench recipient=test@example.com port=587 threads=10 messages=100 rate=10
+```
+
+### Corpus-directory Attachments
+
+Sample attachments randomly from a directory of real files:
+
+```bash
+smtpbench \
+    recipient=test@example.com \
+    port=587 \
+    threads=5 \
+    messages=20 \
+    attachment_dir=./corpus \
+    attachment_probability=0.8 \
+    attachment_count=1-3
+```
+
+- `attachment_dir=` — directory to sample from (mutually exclusive with `attachment_path`/`attachment_size`)
+- `attachment_probability=` — probability (0.0–1.0) that a given message gets attachments (default: `1.0`)
+- `attachment_count=` — number of files to attach; accepts a range like `1-3` (default: `1`)
+- `attachment_size=` also accepts a range, e.g. `10KB-2MB`, to generate variable-sized synthetic attachments
+
+Per-message selection is seeded from the run UUID so results are reproducible.
 
 ## Output and Logging
 
@@ -247,6 +333,49 @@ SMTPBench creates structured JSON logs in the specified log directory:
   ],
   "error": null
 }
+```
+
+### Summary Artifact
+
+After every run, SMTPBench writes a `summary_{timestamp}_{uuid}.json` file to the log directory. It contains the run configuration, send totals, per-MX sent/failed counts, and latency percentiles:
+
+```json
+{
+  "run_uuid": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+  "client_hostname": "loadtest-server",
+  "started_at": "2026-08-04_10-30-00",
+  "elapsed_seconds": 42.5,
+  "config": {
+    "threads": 5,
+    "messages": 100,
+    "rate": null,
+    "tls_mode": "starttls",
+    "auth": false,
+    "port": 587
+  },
+  "totals": {
+    "sent": 495,
+    "failed": 5,
+    "retried": 2,
+    "success_rate": 99.0
+  },
+  "latency_ms": {
+    "p50": 120,
+    "p95": 350,
+    "p99": 510,
+    "max": 820
+  },
+  "per_mx": {
+    "mx1.example.com": {"sent": 495, "failed": 5}
+  }
+}
+```
+
+Use the summary file to gate CI pipelines on latency budgets:
+
+```bash
+# Fail the build if p95 latency exceeds 2s
+python -c "import json,sys; d=json.load(open(sys.argv[1])); sys.exit(1 if (d['latency_ms'] or {}).get('p95',0) > 2000 else 0)" logs/summary_*.json
 ```
 
 ### Email Message Format

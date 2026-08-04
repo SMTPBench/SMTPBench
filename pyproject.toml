@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "smtpbench"
-version = "1.1.1"
+version = "1.2.0"
 description = "A robust SMTP load testing and benchmarking tool with MX failover and detailed logging"
 readme = "README.md"
 requires-python = ">=3.8"
@@ -17,7 +17,7 @@ maintainers = [
 ]
 keywords = ["smtp", "email", "load-testing", "testing", "performance", "benchmark", "benchmarking"]
 classifiers = [
-    "Development Status :: 4 - Beta",
+    "Development Status :: 5 - Production/Stable",
     "Intended Audience :: Developers",
     "Intended Audience :: System Administrators",
     "Topic :: Communications :: Email",
@@ -57,6 +57,7 @@ packages = ["smtpbench"]
 [tool.ruff]
 target-version = "py38"
 line-length = 100
+exclude = ["docs/"]
 
 [tool.ruff.lint]
 # E/W: pycodestyle, F: pyflakes, I: import sorting, UP: pyupgrade.
