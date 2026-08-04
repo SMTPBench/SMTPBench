@@ -50,6 +50,7 @@ debug_logger = None
 attachment_plan = None  # AttachmentPlan or None, built once in main()
 auth_username = None
 auth_password = None
+rate_limiter = None  # TokenBucket or None, built in main()
 
 SIZE_UNITS = {
     "B": 1,
@@ -87,6 +88,7 @@ def show_help():
     {Fore.YELLOW}use_tls{Style.RESET_ALL}=BOOL             DEPRECATED alias for tls_mode (true→starttls, false→none)
     {Fore.YELLOW}delay{Style.RESET_ALL}=SECONDS            Fixed delay between messages (default: 0)
     {Fore.YELLOW}random_delay{Style.RESET_ALL}=BOOL        Random 1-15 second delay (default: false)
+    {Fore.YELLOW}rate{Style.RESET_ALL}=NUMBER              Whole-run cap in messages/sec (excludes delay/random_delay)
     {Fore.YELLOW}retry_delay{Style.RESET_ALL}=SECONDS      Wait time between retries (default: 20)
     {Fore.YELLOW}max_retries{Style.RESET_ALL}=NUMBER       Maximum retry attempts (default: 3)
     {Fore.YELLOW}transaction_timeout{Style.RESET_ALL}=SEC  SMTP timeout in seconds (default: 20)
@@ -343,6 +345,32 @@ def parse_count_range(value):
     if low > high:
         raise ValueError(f"Invalid attachment count range (min > max): {value}")
     return low, high
+
+
+class TokenBucket:
+    """Thread-safe token bucket enforcing a whole-run messages/sec cap.
+
+    Capacity is one token (no burst), so acquisitions are paced ~1/rate apart
+    regardless of thread count.
+    """
+
+    def __init__(self, rate):
+        self.rate = float(rate)
+        self.tokens = 1.0
+        self.timestamp = time.monotonic()
+        self._bucket_lock = threading.Lock()
+
+    def acquire(self):
+        while True:
+            with self._bucket_lock:
+                now = time.monotonic()
+                self.tokens = min(1.0, self.tokens + (now - self.timestamp) * self.rate)
+                self.timestamp = now
+                if self.tokens >= 1.0:
+                    self.tokens -= 1.0
+                    return
+                wait = (1.0 - self.tokens) / self.rate
+            time.sleep(wait)
 
 
 def numbered_filename(filename, index, total):
@@ -763,6 +791,8 @@ def worker(
     while not stop_requested:
         if messages_per_thread > 0 and message_id > messages_per_thread:
             break
+        if rate_limiter is not None:
+            rate_limiter.acquire()
         send_email(
             port,
             recipient,
@@ -847,7 +877,8 @@ def main():
         debug_enabled, \
         attachment_plan, \
         auth_username, \
-        auth_password
+        auth_password, \
+        rate_limiter
     args = parse_args()
     load_dotenv(dotenv_path=args.get("dotenv_path"))
 
@@ -885,6 +916,23 @@ def main():
     tls_mode = resolve_tls_mode(args, port)
     delay = int(args.get("delay", 0))
     random_delay = args.get("random_delay", "false").lower() == "true"
+    rate = args.get("rate")
+    if rate is not None:
+        if delay > 0 or random_delay:
+            print(
+                f"{Fore.RED}✗ rate= cannot be combined with delay= or random_delay=; "
+                f"rate is the sole pacing mechanism.{Style.RESET_ALL}"
+            )
+            sys.exit(1)
+        try:
+            rate_value = float(rate)
+            if rate_value <= 0:
+                raise ValueError
+        except ValueError:
+            print(f"{Fore.RED}✗ rate must be a positive number (messages/sec).{Style.RESET_ALL}")
+            sys.exit(1)
+        rate_limiter = TokenBucket(rate_value)
+        print(f"[INFO] Rate cap: {rate_value} messages/sec (whole run)")
     transaction_timeout = int(args.get("transaction_timeout", 20))
     max_retries = int(args.get("max_retries", 3))
     client_hostname = args.get("client_hostname", socket.gethostname())
@@ -989,7 +1037,7 @@ if __name__ == "__main__":
             "[logfile_output=<dir>] [journal=true|false] [journal_address=<email>] [debug=true|false] "
             "[attachment_path=<path>|attachment_size=<size>] [attachment_count=<n>] "
             "[attachment_filename=<name>] [attachment_mime_type=<mime>] "
-            "[username=<user>] [password=<pass>] [dotenv_path=<path>]"
+            "[username=<user>] [password=<pass>] [dotenv_path=<path>] [rate=<msgs/sec>]"
         )
         sys.exit(1)
     main()

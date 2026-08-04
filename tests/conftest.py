@@ -24,6 +24,7 @@ def reset_globals():
     cli.attachment_plan = None
     cli.auth_username = None
     cli.auth_password = None
+    cli.rate_limiter = None
 
     yield
 
@@ -36,6 +37,7 @@ def reset_globals():
     cli.attachment_plan = None
     cli.auth_username = None
     cli.auth_password = None
+    cli.rate_limiter = None
 
 
 @pytest.fixture

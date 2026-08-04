@@ -602,5 +602,32 @@ class TestCredentials:
         fake_server.login.assert_not_called()
 
 
+class TestRateLimiter:
+    """Test the whole-run token-bucket rate cap."""
+
+    def test_acquire_paces_to_rate(self):
+        import time
+
+        from smtpbench.cli import TokenBucket
+
+        bucket = TokenBucket(20)  # 20/sec => ~0.05s apart
+        start = time.monotonic()
+        for _ in range(5):
+            bucket.acquire()
+        elapsed = time.monotonic() - start
+        # first token is free, remaining 4 paced at ~0.05s => ~0.2s
+        assert 0.15 <= elapsed <= 0.8
+
+    def test_first_acquire_is_immediate(self):
+        import time
+
+        from smtpbench.cli import TokenBucket
+
+        bucket = TokenBucket(1)
+        start = time.monotonic()
+        bucket.acquire()
+        assert time.monotonic() - start < 0.2
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
