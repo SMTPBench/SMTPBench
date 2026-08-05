@@ -687,5 +687,60 @@ class TestSummary:
         assert data["per_mx"]["mx1"] == {"sent": 3, "failed": 1}
 
 
+class TestBodyPlan:
+    """Body-text corpus loading and selection."""
+
+    def test_no_body_text_dir_returns_none(self):
+        from smtpbench.cli import build_body_plan
+
+        assert build_body_plan({}) is None
+
+    def test_loads_corpus_from_dir(self, tmp_path):
+        from smtpbench.cli import build_body_plan
+
+        (tmp_path / "a.txt").write_text("alpha body", encoding="utf-8")
+        (tmp_path / "b.txt").write_text("beta body text", encoding="utf-8")
+        plan = build_body_plan({"body_text_dir": str(tmp_path)})
+        assert plan is not None
+        assert len(plan.corpus) == 2
+        filenames = sorted(entry["filename"] for entry in plan.corpus)
+        assert filenames == ["a.txt", "b.txt"]
+        a_entry = next(e for e in plan.corpus if e["filename"] == "a.txt")
+        assert a_entry["content"] == "alpha body"
+        assert a_entry["char_len"] == len("alpha body")
+
+    def test_missing_dir_raises(self):
+        from smtpbench.cli import build_body_plan
+
+        with pytest.raises(NotADirectoryError):
+            build_body_plan({"body_text_dir": "/no/such/dir/here"})
+
+    def test_empty_dir_raises(self, tmp_path):
+        from smtpbench.cli import build_body_plan
+
+        with pytest.raises(ValueError):
+            build_body_plan({"body_text_dir": str(tmp_path)})
+
+    def test_non_utf8_file_handled(self, tmp_path):
+        from smtpbench.cli import build_body_plan
+
+        (tmp_path / "bad.txt").write_bytes(b"\xff\xfe valid tail")
+        plan = build_body_plan({"body_text_dir": str(tmp_path)})
+        assert len(plan.corpus) == 1
+        # errors="replace" means the read succeeds and produces a str
+        assert isinstance(plan.corpus[0]["content"], str)
+
+    def test_select_returns_corpus_entry(self, tmp_path):
+        import random
+
+        from smtpbench.cli import build_body_plan
+
+        (tmp_path / "only.txt").write_text("the one body", encoding="utf-8")
+        plan = build_body_plan({"body_text_dir": str(tmp_path)})
+        choice = plan.select(random.Random("seed"))
+        assert choice["filename"] == "only.txt"
+        assert choice["content"] == "the one body"
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

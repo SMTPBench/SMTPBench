@@ -606,6 +606,41 @@ def build_attachment_plan(args):
     return plan
 
 
+class BodyPlan:
+    """Per-message body-prefix selection from a corpus of text files."""
+
+    def __init__(self, corpus):
+        self.corpus = corpus  # list of {"filename", "char_len", "content"}
+
+    def select(self, rng):
+        """Return one corpus entry chosen uniformly at random."""
+        return rng.choice(self.corpus)
+
+
+def build_body_plan(args):
+    """Build a BodyPlan from body_text_dir, or None if the flag is absent.
+
+    Reads every regular file as UTF-8 text (errors="replace" so one bad byte
+    never aborts the run). Raises if the directory is missing or yields no files.
+    """
+    body_text_dir = args.get("body_text_dir")
+    if not body_text_dir:
+        return None
+    if not os.path.isdir(body_text_dir):
+        raise NotADirectoryError(f"Body text directory not found: {body_text_dir}")
+    corpus = []
+    for entry in sorted(os.listdir(body_text_dir)):
+        full = os.path.join(body_text_dir, entry)
+        if not os.path.isfile(full):
+            continue
+        with open(full, encoding="utf-8", errors="replace") as body_file:
+            content = body_file.read()
+        corpus.append({"filename": entry, "char_len": len(content), "content": content})
+    if not corpus:
+        raise ValueError(f"Body text directory is empty or unreadable: {body_text_dir}")
+    return BodyPlan(corpus)
+
+
 def attachment_metadata(attachment_configs):
     """Return log-safe attachment metadata without raw content bytes."""
     return [
