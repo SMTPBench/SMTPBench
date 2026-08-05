@@ -803,5 +803,43 @@ class TestBodyPrefix:
         assert entry["body_source"] is None
 
 
+class TestWriteEml:
+    """Offline EML serialization and content-addressed naming."""
+
+    def test_writes_file_named_by_sha256(self, tmp_path):
+        import hashlib
+
+        from smtpbench.cli import create_message, write_eml
+
+        msg = create_message("to@example.com", "from@example.com", 1, 1)
+        digest = write_eml(msg, str(tmp_path))
+        expected = hashlib.sha256(msg.as_bytes()).hexdigest()
+        assert digest == expected
+        written = tmp_path / f"{digest}.eml"
+        assert written.is_file()
+        assert written.read_bytes() == msg.as_bytes()
+
+    def test_identical_bytes_dedupe_to_one_file(self, tmp_path):
+        from email.mime.text import MIMEText
+
+        from smtpbench.cli import write_eml
+
+        # Two messages with identical bytes -> same digest -> one file
+        msg_a = MIMEText("same content")
+        msg_b = MIMEText("same content")
+        d1 = write_eml(msg_a, str(tmp_path))
+        d2 = write_eml(msg_b, str(tmp_path))
+        assert d1 == d2
+        assert len(list(tmp_path.glob("*.eml"))) == 1
+
+    def test_digest_is_64_hex_chars(self, tmp_path):
+        from smtpbench.cli import create_message, write_eml
+
+        msg = create_message("to@example.com", "from@example.com", 7, 9)
+        digest = write_eml(msg, str(tmp_path))
+        assert len(digest) == 64
+        assert all(c in "0123456789abcdef" for c in digest)
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

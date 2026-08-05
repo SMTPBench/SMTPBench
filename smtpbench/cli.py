@@ -1,3 +1,4 @@
+import hashlib
 import json
 import logging
 import mimetypes
@@ -689,6 +690,19 @@ def create_message(
         msg.attach(attachment_part)
 
     return msg
+
+
+def write_eml(msg, out_dir):
+    """Serialize msg and write it as {sha256}.eml into out_dir; return the hex digest.
+
+    Content-addressed naming: identical message bytes map to one file (dedup).
+    """
+    raw = msg.as_bytes()
+    digest = hashlib.sha256(raw).hexdigest()
+    path = os.path.join(out_dir, f"{digest}.eml")
+    with open(path, "wb") as eml_file:
+        eml_file.write(raw)
+    return digest
 
 
 TLS_MODES = ("starttls", "ssl", "none")
