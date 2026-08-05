@@ -23,6 +23,8 @@ def reset_globals():
     cli.mx_hosts = []
     cli.attachment_plan = None
     cli.body_plan = None
+    cli.offline_mode = False
+    cli.eml_out_dir = None
     cli.auth_username = None
     cli.auth_password = None
     cli.rate_limiter = None
@@ -39,6 +41,8 @@ def reset_globals():
     cli.mx_hosts = []
     cli.attachment_plan = None
     cli.body_plan = None
+    cli.offline_mode = False
+    cli.eml_out_dir = None
     cli.auth_username = None
     cli.auth_password = None
     cli.rate_limiter = None

@@ -841,5 +841,96 @@ class TestWriteEml:
         assert all(c in "0123456789abcdef" for c in digest)
 
 
+class TestOfflineMode:
+    """Offline EML send fork in send_email."""
+
+    def _make_progress_bar(self):
+        from unittest.mock import Mock
+
+        return Mock()
+
+    def test_offline_send_writes_eml_and_counts_success(self, tmp_path, mock_logger):
+        from unittest.mock import patch
+
+        from smtpbench import cli
+
+        cli.offline_mode = True
+        cli.eml_out_dir = str(tmp_path)
+        cli.mx_hosts = []
+        loggers = {"success": mock_logger, "fail": mock_logger, "retry": mock_logger}
+
+        with patch("smtpbench.cli.smtplib") as smtplib_mock:
+            cli.send_email(
+                25,
+                "to@example.com",
+                "from@example.com",
+                1,
+                1,
+                0,
+                loggers,
+                "none",
+                20,
+                3,
+                self._make_progress_bar(),
+            )
+            # offline path must never touch smtplib
+            assert not smtplib_mock.SMTP.called
+            assert not smtplib_mock.SMTP_SSL.called
+
+        assert cli.success_count == 1
+        assert cli.fail_count == 0
+        eml_files = list(tmp_path.glob("*.eml"))
+        assert len(eml_files) == 1
+        assert cli.per_mx_stats.get("file", {}).get("sent") == 1
+
+    def test_offline_send_records_file_host_and_latency(self, tmp_path, mock_logger):
+        from smtpbench import cli
+
+        cli.offline_mode = True
+        cli.eml_out_dir = str(tmp_path)
+        loggers = {"success": mock_logger, "fail": mock_logger, "retry": mock_logger}
+        cli.send_email(
+            25,
+            "to@example.com",
+            "from@example.com",
+            2,
+            2,
+            0,
+            loggers,
+            "none",
+            20,
+            3,
+            self._make_progress_bar(),
+        )
+        assert "file" in cli.per_mx_stats
+        assert len(cli.latency_samples) == 1
+
+    def test_offline_send_failure_counts_and_records(self, tmp_path, mock_logger):
+        from unittest.mock import patch
+
+        from smtpbench import cli
+
+        cli.offline_mode = True
+        cli.eml_out_dir = str(tmp_path)
+        loggers = {"success": mock_logger, "fail": mock_logger, "retry": mock_logger}
+        with patch("smtpbench.cli.write_eml", side_effect=OSError("disk full")):
+            cli.send_email(
+                25,
+                "to@example.com",
+                "from@example.com",
+                3,
+                3,
+                0,
+                loggers,
+                "none",
+                20,
+                3,
+                self._make_progress_bar(),
+            )
+        assert cli.fail_count == 1
+        assert cli.success_count == 0
+        assert cli.per_mx_stats.get("file", {}).get("failed") == 1
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

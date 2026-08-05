@@ -51,6 +51,8 @@ debug_enabled = False
 debug_logger = None
 attachment_plan = None  # AttachmentPlan or None, built once in main()
 body_plan = None  # BodyPlan or None, built once in main()
+offline_mode = False  # True when eml_out_dir is set: write EML instead of sending
+eml_out_dir = None  # output directory for offline EML files
 auth_username = None
 auth_password = None
 rate_limiter = None  # TokenBucket or None, built in main()
@@ -819,6 +821,56 @@ def send_email(
     if journal_enabled and journal_address:
         recipients.append(journal_address)
 
+    if offline_mode:
+        start_time = time.time()
+        try:
+            write_eml(msg, eml_out_dir)
+            duration = time.time() - start_time
+            with lock:
+                success_count += 1
+                total_attempts = success_count + fail_count
+                success_rate = (success_count / total_attempts * 100) if total_attempts > 0 else 0
+                progress_bar.set_postfix(
+                    Success=success_count, Fail=fail_count, Rate=color_rate(success_rate)
+                )
+            record_result(True, duration, "file")
+            log_json(
+                loggers["success"],
+                "success",
+                thread_id,
+                message_id,
+                duration,
+                attempt=1,
+                mx_host_used="file",
+                recipients=recipients,
+                attachments=attachments,
+                body_source=body_source,
+            )
+        except Exception as e:
+            duration = time.time() - start_time
+            with lock:
+                fail_count += 1
+                total_attempts = success_count + fail_count
+                success_rate = (success_count / total_attempts * 100) if total_attempts > 0 else 0
+                progress_bar.set_postfix(
+                    Success=success_count, Fail=fail_count, Rate=color_rate(success_rate)
+                )
+            record_result(False, duration, "file")
+            log_json(
+                loggers["fail"],
+                "fail",
+                thread_id,
+                message_id,
+                duration,
+                error=e,
+                attempt=1,
+                mx_host_used="file",
+                recipients=recipients,
+                attachments=attachments,
+                body_source=body_source,
+            )
+        return
+
     attempt = 0
     while not stop_requested and attempt <= max_retries:
         attempt += 1
@@ -1001,6 +1053,9 @@ def main():
         journal_address, \
         debug_enabled, \
         attachment_plan, \
+        body_plan, \
+        offline_mode, \
+        eml_out_dir, \
         auth_username, \
         auth_password, \
         rate_limiter
@@ -1028,7 +1083,12 @@ def main():
 
     recipient = args["recipient"]
     lb_host = args.get("lb_host")
-    if lb_host:
+    eml_out_dir = args.get("eml_out_dir")
+    offline_mode = eml_out_dir is not None
+    if offline_mode:
+        os.makedirs(eml_out_dir, exist_ok=True)
+        mx_hosts = []
+    elif lb_host:
         mx_hosts = [lb_host]
     else:
         mx_hosts = mx_lookup_all(recipient)
@@ -1075,14 +1135,21 @@ def main():
     except Exception as e:
         print(f"{Fore.RED}✗ Attachment configuration error: {e}{Style.RESET_ALL}")
         sys.exit(1)
+    try:
+        body_plan = build_body_plan(args)
+    except Exception as e:
+        print(f"{Fore.RED}✗ Body text configuration error: {e}{Style.RESET_ALL}")
+        sys.exit(1)
 
     loggers = setup_logging()
 
-    # Pre-flight SMTP banner check on first MX host. Print the TLS mode first so
-    # it's visible even when the banner check aborts (it's what the check uses).
-    print(f"[INFO] TLS mode: {tls_mode}")
-    print(f"[INFO] Performing SMTP banner check on {mx_hosts[0]}:{port}...")
-    check_smtp_banner(mx_hosts[0], port, tls_mode, transaction_timeout)
+    if offline_mode:
+        print(f"[INFO] Offline mode: writing EML to {os.path.abspath(eml_out_dir)}")
+    else:
+        # Print the TLS mode first so it's visible even when the banner check aborts.
+        print(f"[INFO] TLS mode: {tls_mode}")
+        print(f"[INFO] Performing SMTP banner check on {mx_hosts[0]}:{port}...")
+        check_smtp_banner(mx_hosts[0], port, tls_mode, transaction_timeout)
 
     signal.signal(signal.SIGINT, signal_handler)
 
@@ -1146,7 +1213,10 @@ def main():
     print("\n=== SMTP Load Test Summary ===")
     print(f"Run UUID: {run_uuid}")
     print(f"Client Hostname: {client_hostname}")
-    print(f"SMTP Hosts Tried: {', '.join(mx_hosts)}")
+    if offline_mode:
+        print("SMTP Hosts Tried: (offline — wrote EML files)")
+    else:
+        print(f"SMTP Hosts Tried: {', '.join(mx_hosts)}")
     print(f"Total Sent: {success_count}")
     print(f"Total Failed: {fail_count}")
     print(f"Total Retried: {retry_count}")
@@ -1160,6 +1230,8 @@ def main():
         "tls_mode": tls_mode,
         "auth": auth_username is not None,
         "port": port,
+        "offline": offline_mode,
+        "body_text_dir": body_plan is not None,
     }
     summary_path = write_summary(summary_config, elapsed)
     print(f"Summary written to: {summary_path}")
