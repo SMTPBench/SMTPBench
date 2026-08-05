@@ -109,6 +109,8 @@ def show_help():
     {Fore.YELLOW}attachment_count{Style.RESET_ALL}=NUMBER  Number of generated attachments (default: 1)
     {Fore.YELLOW}attachment_filename{Style.RESET_ALL}=NAME Filename for static/generated attachment(s)
     {Fore.YELLOW}attachment_mime_type{Style.RESET_ALL}=MIME MIME type override for attachment(s)
+    {Fore.YELLOW}body_text_dir{Style.RESET_ALL}=PATH       Prefix each body with a random text file from this dir
+    {Fore.YELLOW}eml_out_dir{Style.RESET_ALL}=PATH         Offline: write EML files here (sha256-named) instead of sending
     {Fore.YELLOW}username{Style.RESET_ALL}=USER             SMTP AUTH username (prefer env/.env over CLI)
     {Fore.YELLOW}password{Style.RESET_ALL}=PASS             SMTP AUTH password (prefer env/.env over CLI)
     {Fore.YELLOW}dotenv_path{Style.RESET_ALL}=PATH          Path to a .env file (default: .env in cwd)
@@ -1246,7 +1248,8 @@ if __name__ == "__main__":
             "[logfile_output=<dir>] [journal=true|false] [journal_address=<email>] [debug=true|false] "
             "[attachment_path=<path>|attachment_size=<size>] [attachment_count=<n>] "
             "[attachment_filename=<name>] [attachment_mime_type=<mime>] "
-            "[username=<user>] [password=<pass>] [dotenv_path=<path>] [rate=<msgs/sec>]"
+            "[username=<user>] [password=<pass>] [dotenv_path=<path>] [rate=<msgs/sec>] "
+            "[body_text_dir=<dir>] [eml_out_dir=<dir>]"
         )
         sys.exit(1)
     main()

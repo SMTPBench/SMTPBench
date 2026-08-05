@@ -13,6 +13,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Whole-run rate cap**: `rate=` (messages/sec) enforced by a shared token bucket across all threads. Mutually exclusive with `delay=`/`random_delay=`.
 - **Attachment realism**: `attachment_size=` accepts a range (`10KB-2MB`); new `attachment_dir=` samples a corpus directory with `attachment_probability=` and `attachment_count=A-B`. Per-message selection is seeded from the run UUID for reproducibility. The three attachment modes are mutually exclusive.
 - **Summary artifact**: `summary_{timestamp}_{uuid}.json` in the log directory with config, totals, latency percentiles (p50/p95/p99/max, via stdlib `statistics`), and per-MX sent/failed counts.
+- **Body-text prefix**: `body_text_dir=PATH` prepends a randomly chosen text file from the directory above the standard message body. Subject line, tracking headers, and footer are preserved. Selection is deterministic per run. Only the chosen filename and character length are logged — never the excerpt text.
+- **Offline EML output**: `eml_out_dir=PATH` writes each message to the directory as `{sha256}.eml` instead of sending over SMTP. Fully offline — no DNS/MX lookup and no banner check; the recipient is used only as a header. Composes with attachments and `body_text_dir`. Identical message bytes deduplicate to a single file.
+- **Coverage gate**: CI enforces a combined (unit + integration) code-coverage floor via `pytest-cov` + `coverage combine`, with per-suite numbers reported for visibility.
 
 ### Changed
 - **Development status**: promoted from Beta to Production/Stable.

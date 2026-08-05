@@ -217,6 +217,8 @@ smtpbench --help
 | `username` | *(none)* | SMTP AUTH username. Prefer `SMTPBENCH_USER` env var or `.env` over CLI (CLI credentials are visible in `ps`/shell history). |
 | `password` | *(none)* | SMTP AUTH password. Prefer `SMTPBENCH_PASS` env var or `.env` over CLI. |
 | `dotenv_path` | `.env` | Path to a `.env` file for credential resolution (default: `.env` in current directory). |
+| `body_text_dir` | *(none)* | Prefix each message body with a randomly selected text file from this directory. Selection is deterministic per run (seeded from run UUID). Only the chosen filename and character length are logged — never the excerpt text. |
+| `eml_out_dir` | *(none)* | Offline mode: write each composed message to this directory as `{sha256}.eml` instead of sending over SMTP. Skips DNS/MX lookup and banner check. Identical message bytes deduplicate to a single file. Composes with attachments and `body_text_dir`. |
 
 ### SMTP Authentication
 
@@ -296,6 +298,42 @@ smtpbench \
 - `attachment_size=` also accepts a range, e.g. `10KB-2MB`, to generate variable-sized synthetic attachments
 
 Per-message selection is seeded from the run UUID so results are reproducible.
+
+### Body-text Prefix
+
+Prepend a randomly selected text file from a local directory above the standard message body:
+
+```bash
+smtpbench \
+    recipient=test@example.com \
+    port=587 \
+    threads=5 \
+    messages=20 \
+    body_text_dir=./text-corpus
+```
+
+- `body_text_dir=PATH` — directory of `.txt` (or any text) files to sample from
+- Selection is deterministic per run: seeded from the run UUID, so re-runs with the same UUID pick the same file
+- The subject line, tracking headers, and footer are preserved unchanged
+- Only the chosen **filename** and **character length** are logged — the excerpt text is never written to logs
+
+### Offline EML Output
+
+Write composed messages to disk as `.eml` files instead of sending over SMTP:
+
+```bash
+smtpbench \
+    recipient=test@example.com \
+    port=587 \
+    threads=5 \
+    messages=20 \
+    eml_out_dir=./eml-output
+```
+
+- `eml_out_dir=PATH` — directory to write `{sha256}.eml` files into
+- Fully offline: no DNS/MX lookup and no banner check are performed; the recipient is used only as a message header
+- Identical message bytes (same subject, body, attachments) deduplicate to a single file via SHA-256 naming
+- Composes correctly with `attachment_*` options and `body_text_dir=` — all composition happens before the offline fork
 
 ## Output and Logging
 
