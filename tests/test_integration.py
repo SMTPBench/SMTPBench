@@ -7,6 +7,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import time
 
 import pytest
@@ -314,6 +315,41 @@ def test_smtpbench_summary_artifact(docker_compose_setup):
     if latency is not None:
         for pct_key in ("p50", "p95", "p99", "max"):
             assert pct_key in latency, f"latency_ms missing key: {pct_key}"
+
+
+@pytest.mark.integration
+def test_smtpbench_offline_eml(tmp_path):
+    """Offline mode writes threads*messages SHA-named .eml files, no server."""
+    out_dir = tmp_path / "eml_out"
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "smtpbench",
+            "recipient=offline@example.com",
+            "port=25",
+            "threads=2",
+            "messages=3",
+            f"eml_out_dir={out_dir}",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert result.returncode == 0, f"smtpbench failed: {result.stderr}"
+    eml_files = list(out_dir.glob("*.eml"))
+    assert len(eml_files) == 6, f"expected 6 EML files, found {len(eml_files)}"
+    for path in eml_files:
+        stem = path.stem
+        assert len(stem) == 64 and all(c in "0123456789abcdef" for c in stem), (
+            f"filename not a sha256 hex digest: {path.name}"
+        )
+        # Each file parses as a MIME message carrying the run UUID header
+        import email
+
+        with open(path, "rb") as f:
+            parsed = email.message_from_binary_file(f)
+        assert parsed["X-SMTPBench-Run-UUID"], "missing run UUID header"
 
 
 if __name__ == "__main__":
