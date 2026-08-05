@@ -742,5 +742,66 @@ class TestBodyPlan:
         assert choice["content"] == "the one body"
 
 
+class TestBodyPrefix:
+    """Body-prefix assembly and log metadata."""
+
+    def test_body_prefix_prepended_above_subject_echo(self):
+        from smtpbench.cli import create_message
+
+        msg = create_message(
+            "to@example.com", "from@example.com", 1, 1, None, body_prefix="EXCERPT TEXT"
+        )
+        body = msg.get_payload(0).get_payload()
+        # excerpt first, blank line, then the subject-echo line
+        assert body.startswith("EXCERPT TEXT\n\n")
+        assert "Quick test from thread 1 message 1 [" in body
+        assert body.rstrip().endswith("https://github.com/SMTPBench/SMTPBench")
+
+    def test_no_body_prefix_leaves_body_unchanged(self):
+        from smtpbench.cli import create_message, run_uuid
+
+        msg = create_message("to@example.com", "from@example.com", 2, 3, None)
+        body = msg.get_payload(0).get_payload()
+        expected = (
+            f"Quick test from thread 2 message 3 [{run_uuid}]\n\n"
+            "--\nSMTPBench Load Testing Tool\nhttps://github.com/SMTPBench/SMTPBench"
+        )
+        assert body == expected
+
+    def test_tracking_headers_preserved_with_prefix(self):
+        from smtpbench.cli import create_message, run_uuid
+
+        msg = create_message("to@example.com", "from@example.com", 4, 5, None, body_prefix="X")
+        assert msg["X-SMTPBench-Run-UUID"] == run_uuid
+        assert msg["X-SMTPBench-Thread-ID"] == "4"
+        assert msg["X-SMTPBench-Message-ID"] == "5"
+        assert msg["Subject"] == f"Quick test from thread 4 message 5 [{run_uuid}]"
+
+    def test_log_json_includes_body_source_metadata(self, mock_logger):
+        import json
+
+        from smtpbench.cli import log_json
+
+        log_json(
+            mock_logger,
+            "success",
+            1,
+            1,
+            0.05,
+            body_source={"filename": "a.txt", "char_len": 42},
+        )
+        entry = json.loads(mock_logger.info.call_args[0][0])
+        assert entry["body_source"] == {"filename": "a.txt", "char_len": 42}
+
+    def test_log_json_body_source_defaults_none(self, mock_logger):
+        import json
+
+        from smtpbench.cli import log_json
+
+        log_json(mock_logger, "success", 1, 1, 0.05)
+        entry = json.loads(mock_logger.info.call_args[0][0])
+        assert entry["body_source"] is None
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

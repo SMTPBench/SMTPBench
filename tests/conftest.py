@@ -22,6 +22,7 @@ def reset_globals():
     cli.stop_requested = False
     cli.mx_hosts = []
     cli.attachment_plan = None
+    cli.body_plan = None
     cli.auth_username = None
     cli.auth_password = None
     cli.rate_limiter = None
@@ -37,6 +38,7 @@ def reset_globals():
     cli.stop_requested = False
     cli.mx_hosts = []
     cli.attachment_plan = None
+    cli.body_plan = None
     cli.auth_username = None
     cli.auth_password = None
     cli.rate_limiter = None

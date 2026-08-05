@@ -49,6 +49,7 @@ journal_address = None
 debug_enabled = False
 debug_logger = None
 attachment_plan = None  # AttachmentPlan or None, built once in main()
+body_plan = None  # BodyPlan or None, built once in main()
 auth_username = None
 auth_password = None
 rate_limiter = None  # TokenBucket or None, built in main()
@@ -229,6 +230,7 @@ def log_json(
     mx_host_used=None,
     recipients=None,
     attachments=None,
+    body_source=None,
 ):
     """Log structured JSON for each transaction."""
     entry = {
@@ -246,6 +248,7 @@ def log_json(
         "attachments": [
             {k: v for k, v in a.items() if k != "content"} for a in (attachments or [])
         ],
+        "body_source": body_source,
         "error": str(error) if error else None,
     }
     logger.info(json.dumps(entry))
@@ -654,10 +657,14 @@ def attachment_metadata(attachment_configs):
     ]
 
 
-def create_message(recipient, from_address, thread_id, message_id, attachment_configs=None):
+def create_message(
+    recipient, from_address, thread_id, message_id, attachment_configs=None, body_prefix=None
+):
     """Create a tracked SMTPBench MIME message with optional attachments."""
     subject = f"Quick test from thread {thread_id} message {message_id} [{run_uuid}]"
     body = f"{subject}\n\n--\nSMTPBench Load Testing Tool\nhttps://github.com/SMTPBench/SMTPBench"
+    if body_prefix is not None:
+        body = f"{body_prefix}\n\n{body}"
 
     msg = MIMEMultipart()
     msg["From"] = from_address
@@ -782,7 +789,16 @@ def send_email(
 
     rng = random.Random(f"{run_uuid}:{thread_id}:{message_id}")
     attachment_configs = attachment_plan.select_for_message(rng) if attachment_plan else []
-    msg = create_message(recipient, from_address, thread_id, message_id, attachment_configs)
+    body_choice = body_plan.select(rng) if body_plan else None
+    body_prefix = body_choice["content"] if body_choice else None
+    body_source = (
+        {"filename": body_choice["filename"], "char_len": body_choice["char_len"]}
+        if body_choice
+        else None
+    )
+    msg = create_message(
+        recipient, from_address, thread_id, message_id, attachment_configs, body_prefix
+    )
     attachments = attachment_metadata(attachment_configs)
 
     recipients = [recipient]
@@ -817,6 +833,7 @@ def send_email(
                 mx_host_used=mx_host_used,
                 recipients=recipients,
                 attachments=attachments,
+                body_source=body_source,
             )
             return
         else:
@@ -839,6 +856,7 @@ def send_email(
                 mx_host_used=mx_host_used,
                 recipients=recipients,
                 attachments=attachments,
+                body_source=body_source,
             )
 
             if attempt <= max_retries:
@@ -856,6 +874,7 @@ def send_email(
                     mx_host_used=mx_host_used,
                     recipients=recipients,
                     attachments=attachments,
+                    body_source=body_source,
                 )
                 time.sleep(retry_delay)
             else:
