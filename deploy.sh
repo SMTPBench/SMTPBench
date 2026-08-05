@@ -99,7 +99,7 @@ echo ""
 
 echo -e "${BLUE}Step 3: Running tests${NC}"
 if command -v pytest &> /dev/null; then
-    pytest -v -m "not integration" --tb=short
+    pytest -v -m "not integration" --cov=smtpbench --cov-report=term-missing --cov-fail-under=0 --tb=short
     if [ $? -ne 0 ]; then
         echo -e "${RED}✗ Tests failed. Aborting deployment.${NC}"
         exit 1
