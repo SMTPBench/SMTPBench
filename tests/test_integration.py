@@ -352,5 +352,96 @@ def test_smtpbench_offline_eml(tmp_path):
         assert parsed["X-SMTPBench-Run-UUID"], "missing run UUID header"
 
 
+@pytest.mark.integration
+def test_smtpbench_address_list_rotation(docker_compose_setup, tmp_path):
+    """Integration test: recipient_file + from_file rotation against the Docker mail server.
+
+    Sends 6 messages across 2 threads using 3 recipient addresses (roundrobin)
+    and 2 sender addresses (roundrobin).  After the run, asserts — scoped to the
+    current run UUID — that:
+    - at least 6 messages landed in the mbox;
+    - more than one distinct From: header is observed (proving from_file rotation);
+    - all 3 recipient addresses received at least one message.
+    """
+    recipients = [
+        "test@local.ingest.lets.qa",
+        "bench1@local.ingest.lets.qa",
+        "bench2@local.ingest.lets.qa",
+    ]
+    senders = [
+        "loadtest1@local.ingest.lets.qa",
+        "loadtest2@local.ingest.lets.qa",
+    ]
+
+    recipients_file = tmp_path / "recipients.txt"
+    senders_file = tmp_path / "senders.txt"
+    recipients_file.write_text("\n".join(recipients) + "\n")
+    senders_file.write_text("\n".join(senders) + "\n")
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "smtpbench",
+            f"recipient_file={recipients_file}",
+            "recipient_file_order=roundrobin",
+            f"from_file={senders_file}",
+            "from_file_order=roundrobin",
+            "lb_host=localhost",
+            "port=25",
+            "threads=2",
+            "messages=6",
+            "use_tls=false",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    assert result.returncode == 0, (
+        f"smtpbench failed (rc={result.returncode}):\n"
+        f"stdout: {result.stdout}\nstderr: {result.stderr}"
+    )
+
+    # Give Postfix a moment to finalise delivery.
+    time.sleep(5)
+
+    # Fix mbox permissions so we can read the file.
+    mbox_path = "test-mail/root"
+    fix_mbox_permissions(mbox_path)
+
+    assert os.path.exists(mbox_path), f"mbox not found at {mbox_path}"
+
+    # Scope all assertions to the current run UUID.
+    run_uuid = get_current_run_uuid()
+    assert run_uuid, "Could not determine current run UUID from success logs"
+
+    mbox = mailbox.mbox(mbox_path)
+
+    seen_froms = set()
+    seen_recipients = set()
+    matched = 0
+
+    for message in mbox:
+        if message.get("X-SMTPBench-Run-UUID") != run_uuid:
+            continue
+        matched += 1
+        from_header = message.get("From", "")
+        to_header = message.get("To", "")
+        # Strip display-name decoration, keep the bare address.
+        from_addr = re.sub(r".*<([^>]+)>.*", r"\1", from_header).strip()
+        to_addr = re.sub(r".*<([^>]+)>.*", r"\1", to_header).strip()
+        seen_froms.add(from_addr or from_header)
+        seen_recipients.add(to_addr or to_header)
+
+    assert matched >= 6, f"Expected ≥6 messages for run {run_uuid}, found {matched}"
+    assert len(seen_froms) > 1, (
+        f"Expected >1 distinct From address (from_file rotation), got {seen_froms!r}"
+    )
+    assert len(seen_recipients) == len(recipients), (
+        f"Expected all {len(recipients)} recipient addresses to appear "
+        f"(roundrobin coverage), got {seen_recipients!r}"
+    )
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v", "-m", "integration"])
