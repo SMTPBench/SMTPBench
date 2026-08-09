@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Body-text prefix**: `body_text_dir=PATH` prepends a randomly chosen text file from the directory above the standard message body. Subject line, tracking headers, and footer are preserved. Selection is deterministic per run. Only the chosen filename and character length are logged — never the excerpt text.
 - **Offline EML output**: `eml_out_dir=PATH` writes each message to the directory as `{sha256}.eml` instead of sending over SMTP. Fully offline — no DNS/MX lookup and no banner check; the recipient is used only as a header. Composes with attachments and `body_text_dir`. Identical message bytes deduplicate to a single file.
 - **Coverage gate**: CI enforces a combined (unit + integration) code-coverage floor via `pytest-cov` + `coverage combine`, with per-suite numbers reported for visibility.
+- **Address lists from a file**: `recipient_file=` / `from_file=` / `journal_file=` each read a one-address-per-line file (blank lines and `#` comments ignored, every address validated) and select per message, independently. `*_file_order=random|roundrobin` (default `random`) is set per field. A `*_file` overrides and cannot be combined with its single-value counterpart. `recipient_file` requires `lb_host=` or `eml_out_dir=` (offline); `journal_file` requires `journal=true`. Chosen `from`/`journal` addresses are logged per message; the summary records file/count/order metadata only.
 
 ### Changed
 - **Development status**: promoted from Beta to Production/Stable.

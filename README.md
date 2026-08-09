@@ -335,6 +335,51 @@ smtpbench \
 - Identical message bytes (same subject, body, attachments) deduplicate to a single file via SHA-256 naming
 - Composes correctly with `attachment_*` options and `body_text_dir=` — all composition happens before the offline fork
 
+### Address Lists from a File
+
+Supply a plain-text file of addresses for `recipient`, `from_address`, or `journal_address`. SMTPBench picks one address per message, independently per field.
+
+| Parameter | Description |
+|-----------|-------------|
+| `recipient_file=PATH` | File of recipient addresses. Requires `lb_host=` (fixed relay) or `eml_out_dir=` (offline). |
+| `from_file=PATH` | File of From addresses. |
+| `journal_file=PATH` | File of journal addresses. Requires `journal=true`. |
+| `recipient_file_order=random\|roundrobin` | Selection order for recipient file (default: `random`). |
+| `from_file_order=random\|roundrobin` | Selection order for from file (default: `random`). |
+| `journal_file_order=random\|roundrobin` | Selection order for journal file (default: `random`). |
+
+**Rules and constraints:**
+
+- A `*_file` key **overrides** and **cannot be combined with** its single-value sibling (`recipient`, `from_address`, or `journal_address`).
+- `recipient_file` requires `lb_host=` (a fixed relay) or `eml_out_dir=` (offline mode). MX-based delivery with a multi-domain recipient file is not supported; all recipients are delivered through the one relay.
+- `journal_file` requires `journal=true`.
+
+**File format:**
+
+- One address per line.
+- Blank lines and lines starting with `#` are ignored.
+- Every address is validated: must contain exactly one `@` with a non-empty local part and domain.
+
+**Selection order:**
+
+- `random` (default) — pick a random address each message.
+- `roundrobin` — cycle through addresses in order; gives even coverage across the run.
+
+**Logging:**
+
+- The chosen `from` and `journal` addresses are logged per message in the success/fail/retry log entries.
+- The run summary records file path, address count, and order — never the raw addresses themselves.
+
+**Example:**
+
+```bash
+smtpbench recipient_file=recipients.txt recipient_file_order=roundrobin \
+          from_file=senders.txt \
+          lb_host=smtp.example.com port=587 threads=5 messages=100
+```
+
+> **Note:** Per-domain MX resolution for multi-domain recipient files is not supported. All recipients are delivered through the configured relay (`lb_host=`). Support for per-domain MX may be added in a future release, but it is generally slower and not relevant to relay benchmarking.
+
 ## Output and Logging
 
 SMTPBench creates structured JSON logs in the specified log directory:

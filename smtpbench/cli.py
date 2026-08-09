@@ -106,6 +106,12 @@ def show_help():
     {Fore.YELLOW}logfile_output{Style.RESET_ALL}=PATH      Log directory (default: ./logs)
     {Fore.YELLOW}journal{Style.RESET_ALL}=BOOL             Enable journal mode (default: false)
     {Fore.YELLOW}journal_address{Style.RESET_ALL}=EMAIL    Journal recipient (default: same as recipient)
+    {Fore.YELLOW}recipient_file{Style.RESET_ALL}=PATH      File of recipient addresses (needs lb_host= or eml_out_dir=)
+    {Fore.YELLOW}from_file{Style.RESET_ALL}=PATH           File of From addresses
+    {Fore.YELLOW}journal_file{Style.RESET_ALL}=PATH        File of journal addresses (needs journal=true)
+    {Fore.YELLOW}recipient_file_order{Style.RESET_ALL}=random|roundrobin  Recipient selection (default random)
+    {Fore.YELLOW}from_file_order{Style.RESET_ALL}=random|roundrobin       From selection (default random)
+    {Fore.YELLOW}journal_file_order{Style.RESET_ALL}=random|roundrobin    Journal selection (default random)
     {Fore.YELLOW}debug{Style.RESET_ALL}=BOOL               Enable debug logging (default: false)
     {Fore.YELLOW}attachment_path{Style.RESET_ALL}=PATH     Attach a specific file to each message
     {Fore.YELLOW}attachment_size{Style.RESET_ALL}=SIZE     Generate synthetic attachment(s), e.g. 512KB, 5MB
@@ -1458,7 +1464,10 @@ if __name__ == "__main__":
             "[attachment_path=<path>|attachment_size=<size>] [attachment_count=<n>] "
             "[attachment_filename=<name>] [attachment_mime_type=<mime>] "
             "[username=<user>] [password=<pass>] [dotenv_path=<path>] [rate=<msgs/sec>] "
-            "[body_text_dir=<dir>] [eml_out_dir=<dir>]"
+            "[body_text_dir=<dir>] [eml_out_dir=<dir>] "
+            "[recipient_file=<path>] [from_file=<path>] [journal_file=<path>] "
+            "[recipient_file_order=random|roundrobin] "
+            "[from_file_order=random|roundrobin] [journal_file_order=random|roundrobin]"
         )
         sys.exit(1)
     main()
