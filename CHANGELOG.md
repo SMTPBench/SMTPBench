@@ -5,6 +5,33 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.0] - 2026-08-04
+
+### Added
+- **SMTP AUTH**: `username=`/`password=` with resolution order CLI > environment (`SMTPBENCH_USER`/`SMTPBENCH_PASS`) > `.env` (via `python-dotenv`, path overridable with `dotenv_path=`). Credentials are never written to logs, the summary, or terminal output beyond a one-line warning when passed on the CLI.
+- **TLS transport modes**: `tls_mode=starttls|ssl|none` (default `starttls`; `ssl` auto-selected on port 465). This fixes implicit-TLS submission on port 465, which previously never used `SMTP_SSL`. `use_tls=` is retained as a soft-deprecated alias.
+- **Whole-run rate cap**: `rate=` (messages/sec) enforced by a shared token bucket across all threads. Mutually exclusive with `delay=`/`random_delay=`.
+- **Attachment realism**: `attachment_size=` accepts a range (`10KB-2MB`); new `attachment_dir=` samples a corpus directory with `attachment_probability=` and `attachment_count=A-B`. Per-message selection is seeded from the run UUID for reproducibility. The three attachment modes are mutually exclusive.
+- **Summary artifact**: `summary_{timestamp}_{uuid}.json` in the log directory with config, totals, latency percentiles (p50/p95/p99/max, via stdlib `statistics`), and per-MX sent/failed counts.
+- **Body-text prefix**: `body_text_dir=PATH` prepends a randomly chosen text file from the directory above the standard message body. Subject line, tracking headers, and footer are preserved. Selection is deterministic per run. Only the chosen filename and character length are logged — never the excerpt text.
+- **Offline EML output**: `eml_out_dir=PATH` writes each message to the directory as `{sha256}.eml` instead of sending over SMTP. Fully offline — no DNS/MX lookup and no banner check; the recipient is used only as a header. Composes with attachments and `body_text_dir`. Identical message bytes deduplicate to a single file.
+- **Coverage gate**: CI enforces a combined (unit + integration) code-coverage floor via `pytest-cov` + `coverage combine`, with per-suite numbers reported for visibility.
+- **Address lists from a file**: `recipient_file=` / `from_file=` / `journal_file=` each read a one-address-per-line file (blank lines and `#` comments ignored, every address validated) and select per message, independently. `*_file_order=random|roundrobin` (default `random`) is set per field. A `*_file` overrides and cannot be combined with its single-value counterpart. `recipient_file` requires `lb_host=` or `eml_out_dir=` (offline); `journal_file` requires `journal=true`. Chosen `from`/`journal` addresses are logged per message; the summary records file/count/order metadata only.
+
+### Changed
+- **Development status**: promoted from Beta to Production/Stable.
+- **Minimum Python raised to 3.9** to match the `setuptools>=77.0.0` build requirement.
+- **Credentials fail fast**: passing only one of `username=`/`password=` (or `SMTPBENCH_USER`/`SMTPBENCH_PASS`) now aborts with a clear error instead of failing opaquely inside `smtplib.login` on every send.
+- **`attachment_filename` + `attachment_dir` rejected**: the combination was silently ignored (corpus files keep their own names); it now raises a configuration error.
+- **Summary totals derive from per-MX final outcomes**: `totals.sent`/`totals.failed` and `success_rate` now reflect per-message final outcomes (consistent with `per_mx`) instead of counting each retried attempt as a separate failure. `totals.retried` still reports the attempt-level retry count.
+- **Journal destination fails fast**: `journal=true` with `recipient_file=` (no single `recipient=` to fall back to) and no `journal_address=`/`journal_file=` now aborts at startup instead of silently journaling nowhere. A present-but-empty `*_file=` value is likewise rejected as a configuration error rather than treated as absent.
+
+### Security
+- **Credentials no longer leak under `debug=true`**: `smtplib`'s wire debug is disabled for the duration of `server.login()`, so the (base64, reversible) SASL AUTH exchange is never written to the terminal. The design doc's prior claim that base64 SASL is "obscured" was incorrect and has been corrected.
+
+### Dependencies
+- Added `python-dotenv>=1.0.0`.
+
 ## [1.1.1] - 2026-08-03
 
 ### Added

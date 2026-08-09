@@ -7,6 +7,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import time
 
 import pytest
@@ -271,6 +272,180 @@ def test_smtpbench_logs_created(docker_compose_setup):
 
         # The log entry's run_uuid must match the current run.
         assert log_entry["run_uuid"] == run_uuid
+
+
+@pytest.mark.integration
+def test_smtpbench_summary_artifact(docker_compose_setup):
+    """Test that SMTPBench writes a valid summary JSON artifact for the current run."""
+
+    # Run SMTPBench
+    result = subprocess.run(
+        ["docker", "compose", "-f", "docker-compose.test.yml", "up", "--build", "smtpbench"],
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, f"SMTPBench failed: {result.stderr}"
+
+    time.sleep(5)
+
+    # Scope to the current invocation's run UUID so a stale summary file from
+    # an earlier run in the shared log directory can't satisfy the assertion.
+    run_uuid = get_current_run_uuid()
+    assert run_uuid, "Could not determine current run UUID from success logs"
+
+    # The summary file is named summary_{timestamp}_{uuid}.json
+    summary_files = glob.glob(os.path.join("logs", f"summary_*_{run_uuid}.json"))
+    assert summary_files, f"No summary file found for current run {run_uuid}"
+
+    summary_path = summary_files[0]
+    with open(summary_path) as f:
+        summary = json.load(f)
+
+    # Top-level run_uuid must match the current run
+    assert summary.get("run_uuid") == run_uuid, (
+        f"Summary run_uuid {summary.get('run_uuid')!r} != expected {run_uuid!r}"
+    )
+
+    # Required top-level keys
+    for key in ("client_hostname", "started_at", "elapsed_seconds", "config", "totals", "per_mx"):
+        assert key in summary, f"Summary missing required key: {key}"
+
+    # latency_ms is None when no messages succeeded, otherwise a dict with percentile keys
+    latency = summary.get("latency_ms")
+    if latency is not None:
+        for pct_key in ("p50", "p95", "p99", "max"):
+            assert pct_key in latency, f"latency_ms missing key: {pct_key}"
+
+
+@pytest.mark.integration
+def test_smtpbench_offline_eml(tmp_path):
+    """Offline mode writes threads*messages SHA-named .eml files, no server."""
+    out_dir = tmp_path / "eml_out"
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "smtpbench",
+            "recipient=offline@example.com",
+            "port=25",
+            "threads=2",
+            "messages=3",
+            f"eml_out_dir={out_dir}",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert result.returncode == 0, f"smtpbench failed: {result.stderr}"
+    eml_files = list(out_dir.glob("*.eml"))
+    assert len(eml_files) == 6, f"expected 6 EML files, found {len(eml_files)}"
+    for path in eml_files:
+        stem = path.stem
+        assert len(stem) == 64 and all(c in "0123456789abcdef" for c in stem), (
+            f"filename not a sha256 hex digest: {path.name}"
+        )
+        # Each file parses as a MIME message carrying the run UUID header
+        import email
+
+        with open(path, "rb") as f:
+            parsed = email.message_from_binary_file(f)
+        assert parsed["X-SMTPBench-Run-UUID"], "missing run UUID header"
+
+
+@pytest.mark.integration
+def test_smtpbench_address_list_rotation(docker_compose_setup, tmp_path):
+    """Integration test: recipient_file + from_file rotation against the Docker mail server.
+
+    Sends 6 messages per thread (12 total) across 2 threads using 3 recipient
+    addresses (roundrobin) and 2 sender addresses (roundrobin).  After the run,
+    asserts — scoped to the current run UUID — that:
+    - at least 12 messages landed in the mbox;
+    - more than one distinct From: header is observed (proving from_file rotation);
+    - all 3 recipient addresses received at least one message.
+    """
+    recipients = [
+        "test@local.ingest.lets.qa",
+        "test2@local.ingest.lets.qa",
+        "test3@local.ingest.lets.qa",
+    ]
+    senders = [
+        "loadtest1@local.ingest.lets.qa",
+        "loadtest2@local.ingest.lets.qa",
+    ]
+
+    recipients_file = tmp_path / "recipients.txt"
+    senders_file = tmp_path / "senders.txt"
+    recipients_file.write_text("\n".join(recipients) + "\n")
+    senders_file.write_text("\n".join(senders) + "\n")
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "smtpbench",
+            f"recipient_file={recipients_file}",
+            "recipient_file_order=roundrobin",
+            f"from_file={senders_file}",
+            "from_file_order=roundrobin",
+            "lb_host=localhost",
+            "port=25",
+            "threads=2",
+            "messages=6",
+            "use_tls=false",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    assert result.returncode == 0, (
+        f"smtpbench failed (rc={result.returncode}):\n"
+        f"stdout: {result.stdout}\nstderr: {result.stderr}"
+    )
+
+    # Give Postfix a moment to finalise delivery.
+    time.sleep(5)
+
+    # Fix mbox permissions so we can read the file.
+    mbox_path = "test-mail/root"
+    fix_mbox_permissions(mbox_path)
+
+    assert os.path.exists(mbox_path), f"mbox not found at {mbox_path}"
+
+    # Scope all assertions to the current run UUID.
+    run_uuid = get_current_run_uuid()
+    assert run_uuid, "Could not determine current run UUID from success logs"
+
+    mbox = mailbox.mbox(mbox_path)
+
+    seen_froms = set()
+    seen_recipients = set()
+    matched = 0
+
+    for message in mbox:
+        if message.get("X-SMTPBench-Run-UUID") != run_uuid:
+            continue
+        matched += 1
+        from_header = message.get("From", "")
+        to_header = message.get("To", "")
+        # Strip display-name decoration, keep the bare address.
+        from_addr = re.sub(r".*<([^>]+)>.*", r"\1", from_header).strip()
+        to_addr = re.sub(r".*<([^>]+)>.*", r"\1", to_header).strip()
+        seen_froms.add(from_addr or from_header)
+        seen_recipients.add(to_addr or to_header)
+
+    assert matched >= 12, f"Expected ≥12 messages for run {run_uuid}, found {matched}"
+    # Compare the observed address sets directly against what was configured:
+    # every sender/recipient must have been used, and no unexpected address
+    # may appear. This is stronger than a cardinality check — it rejects both
+    # under-coverage and stray addresses.
+    assert seen_froms == set(senders), (
+        f"From addresses must match the configured senders exactly "
+        f"(from_file rotation); expected {set(senders)!r}, got {seen_froms!r}"
+    )
+    assert seen_recipients == set(recipients), (
+        f"Recipient addresses must match the configured recipients exactly "
+        f"(roundrobin coverage); expected {set(recipients)!r}, got {seen_recipients!r}"
+    )
 
 
 if __name__ == "__main__":

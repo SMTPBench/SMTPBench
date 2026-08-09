@@ -206,10 +206,179 @@ smtpbench --help
 | `journal_address` | *(same as recipient)* | Email address for journal copies |
 | `debug` | `false` | Enable debug logging |
 | `attachment_path` | *(none)* | Attach a specific file to every message |
-| `attachment_size` | *(none)* | Generate synthetic attachment(s) of a given size (`512KB`, `1MB`, etc.) |
-| `attachment_count` | `1` | Number of generated attachments per message |
+| `attachment_size` | *(none)* | Generate synthetic attachment(s); accepts a fixed size or range (`512KB`, `10KB-2MB`) |
+| `attachment_dir` | *(none)* | Sample attachments from a corpus directory (mutually exclusive with `attachment_path`/`attachment_size`) |
+| `attachment_probability` | `1.0` | Probability (0.0–1.0) that any given message gets an attachment (used with `attachment_size`/`attachment_dir`) |
+| `attachment_count` | `1` | Number of attachments per message; accepts a range (`1-3`) |
 | `attachment_filename` | source/generated name | Override attachment filename (`payload.bin` becomes `payload-1.bin`, `payload-2.bin`, etc. when count > 1) |
 | `attachment_mime_type` | auto-detected / `application/octet-stream` | Override attachment MIME type |
+| `tls_mode` | `starttls` (or `ssl` on port 465) | TLS transport: `starttls`, `ssl`, or `none`. Use `ssl` for port 465 implicit-TLS. `use_tls=` is a deprecated alias. |
+| `rate` | *(none)* | Whole-run cap in messages/sec, enforced by a shared token bucket. Mutually exclusive with `delay=`/`random_delay=`. |
+| `username` | *(none)* | SMTP AUTH username. Prefer `SMTPBENCH_USER` env var or `.env` over CLI (CLI credentials are visible in `ps`/shell history). |
+| `password` | *(none)* | SMTP AUTH password. Prefer `SMTPBENCH_PASS` env var or `.env` over CLI. |
+| `dotenv_path` | *(auto-discovered)* | Path to a `.env` file for credential resolution. When unset, python-dotenv searches the current directory and its parents for a `.env` file. |
+| `body_text_dir` | *(none)* | Prefix each message body with a randomly selected text file from this directory. Selection is deterministic per run (seeded from run UUID). Only the chosen filename and character length are logged — never the excerpt text. |
+| `eml_out_dir` | *(none)* | Offline mode: write each composed message to this directory as `{sha256}.eml` instead of sending over SMTP. Skips DNS/MX lookup and banner check. Identical message bytes deduplicate to a single file. Composes with attachments and `body_text_dir`. |
+
+### SMTP Authentication
+
+SMTPBench resolves credentials in this order: **CLI arguments → environment variables → `.env` file**.
+
+Preferred — set environment variables or use a `.env` file so credentials are not visible in process listings:
+
+```bash
+# Via environment variables
+export SMTPBENCH_USER=myuser
+export SMTPBENCH_PASS=mypassword
+smtpbench recipient=test@example.com port=587 threads=5 messages=10
+
+# Or via a .env file (auto-discovered in the current directory or its parents)
+echo "SMTPBENCH_USER=myuser" >> .env
+echo "SMTPBENCH_PASS=mypassword" >> .env
+smtpbench recipient=test@example.com port=587 threads=5 messages=10
+
+# Custom .env path
+smtpbench recipient=test@example.com port=587 threads=5 messages=10 dotenv_path=/etc/smtpbench.env
+```
+
+Discouraged — passing credentials on the CLI makes them visible in `ps`, `top`, and shell history:
+
+```bash
+# ⚠ Credentials visible in ps/shell history — prefer env/.env instead
+smtpbench recipient=test@example.com port=587 threads=5 messages=10 \
+    username=myuser password=mypassword
+```
+
+SMTPBench prints a warning when credentials are supplied this way.
+
+### TLS Modes
+
+Use `tls_mode=` to control the TLS transport. The default is `starttls` (upgrade an initially plain connection); port 465 defaults to `ssl` (implicit TLS from the start):
+
+```bash
+# STARTTLS on port 587 (default)
+smtpbench recipient=test@example.com port=587 threads=5 messages=10 tls_mode=starttls
+
+# Implicit SSL on port 465
+smtpbench recipient=test@example.com port=465 threads=5 messages=10 tls_mode=ssl
+
+# Plain (no TLS)
+smtpbench recipient=test@example.com port=25 threads=5 messages=10 tls_mode=none
+```
+
+The `use_tls=true/false` flag is a deprecated alias for `tls_mode=starttls/none`.
+
+### Rate Limiting
+
+Cap the whole-run throughput with `rate=` (messages/sec). The limit is enforced by a shared token bucket across all threads and is mutually exclusive with `delay=`/`random_delay=`:
+
+```bash
+# Cap at 10 messages/sec across all threads
+smtpbench recipient=test@example.com port=587 threads=10 messages=100 rate=10
+```
+
+### Corpus-directory Attachments
+
+Sample attachments randomly from a directory of real files:
+
+```bash
+smtpbench \
+    recipient=test@example.com \
+    port=587 \
+    threads=5 \
+    messages=20 \
+    attachment_dir=./corpus \
+    attachment_probability=0.8 \
+    attachment_count=1-3
+```
+
+- `attachment_dir=` — directory to sample from (mutually exclusive with `attachment_path`/`attachment_size`)
+- `attachment_probability=` — probability (0.0–1.0) that a given message gets attachments (default: `1.0`)
+- `attachment_count=` — number of files to attach; accepts a range like `1-3` (default: `1`)
+- `attachment_size=` also accepts a range, e.g. `10KB-2MB`, to generate variable-sized synthetic attachments
+
+Per-message selection is seeded from the run UUID so results are reproducible.
+
+### Body-text Prefix
+
+Prepend a randomly selected text file from a local directory above the standard message body:
+
+```bash
+smtpbench \
+    recipient=test@example.com \
+    port=587 \
+    threads=5 \
+    messages=20 \
+    body_text_dir=./text-corpus
+```
+
+- `body_text_dir=PATH` — directory of `.txt` (or any text) files to sample from
+- Selection is deterministic per run: seeded from the run UUID, so re-runs with the same UUID pick the same file
+- The subject line, tracking headers, and footer are preserved unchanged
+- Only the chosen **filename** and **character length** are logged — the excerpt text is never written to logs
+
+### Offline EML Output
+
+Write composed messages to disk as `.eml` files instead of sending over SMTP:
+
+```bash
+smtpbench \
+    recipient=test@example.com \
+    port=587 \
+    threads=5 \
+    messages=20 \
+    eml_out_dir=./eml-output
+```
+
+- `eml_out_dir=PATH` — directory to write `{sha256}.eml` files into
+- Fully offline: no DNS/MX lookup and no banner check are performed; the recipient is used only as a message header
+- Identical message bytes (same subject, body, attachments) deduplicate to a single file via SHA-256 naming
+- Composes correctly with `attachment_*` options and `body_text_dir=` — all composition happens before the offline fork
+
+### Address Lists from a File
+
+Supply a plain-text file of addresses for `recipient`, `from_address`, or `journal_address`. SMTPBench picks one address per message, independently per field.
+
+| Parameter | Description |
+|-----------|-------------|
+| `recipient_file=PATH` | File of recipient addresses. Requires `lb_host=` (fixed relay) or `eml_out_dir=` (offline). |
+| `from_file=PATH` | File of From addresses. |
+| `journal_file=PATH` | File of journal addresses. Requires `journal=true`. |
+| `recipient_file_order=random\|roundrobin` | Selection order for recipient file (default: `random`). |
+| `from_file_order=random\|roundrobin` | Selection order for from file (default: `random`). |
+| `journal_file_order=random\|roundrobin` | Selection order for journal file (default: `random`). |
+
+**Rules and constraints:**
+
+- A `*_file` key **overrides** and **cannot be combined with** its single-value sibling (`recipient`, `from_address`, or `journal_address`).
+- `recipient_file` requires `lb_host=` (a fixed relay) or `eml_out_dir=` (offline mode). MX-based delivery with a multi-domain recipient file is not supported; all recipients are delivered through the one relay.
+- `journal_file` requires `journal=true`.
+
+**File format:**
+
+- One address per line.
+- Blank lines and lines starting with `#` are ignored.
+- Every address is validated: must contain exactly one `@` with a non-empty local part and domain.
+
+**Selection order:**
+
+- `random` (default) — pick a random address each message.
+- `roundrobin` — cycle through addresses in order; gives even coverage across the run.
+
+**Logging:**
+
+- The chosen `from` and `journal` addresses are logged per message in the success/fail/retry log entries.
+- The run summary records file path, address count, and order — never the raw addresses themselves.
+
+**Example:**
+
+```bash
+smtpbench recipient_file=recipients.txt recipient_file_order=roundrobin \
+          from_file=senders.txt \
+          lb_host=smtp.example.com port=587 threads=5 messages=100
+```
+
+> **Note:** Per-domain MX resolution for multi-domain recipient files is not supported. All recipients are delivered through the configured relay (`lb_host=`). Support for per-domain MX may be added in a future release, but it is generally slower and not relevant to relay benchmarking.
 
 ## Output and Logging
 
@@ -247,6 +416,49 @@ SMTPBench creates structured JSON logs in the specified log directory:
   ],
   "error": null
 }
+```
+
+### Summary Artifact
+
+After every run, SMTPBench writes a `summary_{timestamp}_{uuid}.json` file to the log directory. It contains the run configuration, send totals, per-MX sent/failed counts, and latency percentiles:
+
+```json
+{
+  "run_uuid": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+  "client_hostname": "loadtest-server",
+  "started_at": "2026-08-04_10-30-00",
+  "elapsed_seconds": 42.5,
+  "config": {
+    "threads": 5,
+    "messages": 100,
+    "rate": null,
+    "tls_mode": "starttls",
+    "auth": false,
+    "port": 587
+  },
+  "totals": {
+    "sent": 495,
+    "failed": 5,
+    "retried": 2,
+    "success_rate": 99.0
+  },
+  "latency_ms": {
+    "p50": 120,
+    "p95": 350,
+    "p99": 510,
+    "max": 820
+  },
+  "per_mx": {
+    "mx1.example.com": {"sent": 495, "failed": 5}
+  }
+}
+```
+
+Use the summary file to gate CI pipelines on latency budgets:
+
+```bash
+# Fail the build if p95 latency exceeds 2s (checks the newest summary file)
+python -c "import json,glob,os,sys; f=max(glob.glob('logs/summary_*.json'), key=os.path.getmtime); d=json.load(open(f)); sys.exit(1 if (d['latency_ms'] or {}).get('p95',0) > 2000 else 0)"
 ```
 
 ### Email Message Format
@@ -429,7 +641,7 @@ smtpbench \
 
 ## Requirements
 
-- Python 3.8 or higher
+- Python 3.9 or higher
 - Dependencies (automatically installed):
   - `dnspython>=2.0.0`
   - `tqdm>=4.0.0`

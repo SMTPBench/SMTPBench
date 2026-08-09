@@ -16,8 +16,9 @@ htmlcov/
 # macOS system files
 .DS_Store
 
-# Log directory
+# Log directory (runtime writes success/fail/retry/debug logs and summary_*.json here)
 log/
+logs/
 
 # Additional pytest related
 .pytest_cache/
@@ -54,3 +55,9 @@ coverage.xml
 
 # Ignore test-mail files or folders
 test-mail
+
+# Git worktrees (isolated workspaces)
+.worktrees/
+
+# Subagent-driven-development scratch (ledgers, briefs, review packages)
+.superpowers/
