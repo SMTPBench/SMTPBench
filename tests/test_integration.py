@@ -356,17 +356,17 @@ def test_smtpbench_offline_eml(tmp_path):
 def test_smtpbench_address_list_rotation(docker_compose_setup, tmp_path):
     """Integration test: recipient_file + from_file rotation against the Docker mail server.
 
-    Sends 6 messages across 2 threads using 3 recipient addresses (roundrobin)
-    and 2 sender addresses (roundrobin).  After the run, asserts — scoped to the
-    current run UUID — that:
-    - at least 6 messages landed in the mbox;
+    Sends 6 messages per thread (12 total) across 2 threads using 3 recipient
+    addresses (roundrobin) and 2 sender addresses (roundrobin).  After the run,
+    asserts — scoped to the current run UUID — that:
+    - at least 12 messages landed in the mbox;
     - more than one distinct From: header is observed (proving from_file rotation);
     - all 3 recipient addresses received at least one message.
     """
     recipients = [
         "test@local.ingest.lets.qa",
-        "bench1@local.ingest.lets.qa",
-        "bench2@local.ingest.lets.qa",
+        "test2@local.ingest.lets.qa",
+        "test3@local.ingest.lets.qa",
     ]
     senders = [
         "loadtest1@local.ingest.lets.qa",
@@ -433,7 +433,7 @@ def test_smtpbench_address_list_rotation(docker_compose_setup, tmp_path):
         seen_froms.add(from_addr or from_header)
         seen_recipients.add(to_addr or to_header)
 
-    assert matched >= 6, f"Expected ≥6 messages for run {run_uuid}, found {matched}"
+    assert matched >= 12, f"Expected ≥12 messages for run {run_uuid}, found {matched}"
     assert len(seen_froms) > 1, (
         f"Expected >1 distinct From address (from_file rotation), got {seen_froms!r}"
     )
