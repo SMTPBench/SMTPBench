@@ -702,6 +702,36 @@ def build_address_list(args, field):
     return AddressList(addresses, order)
 
 
+def validate_address_list_args(args, offline_mode):
+    """Enforce the cross-argument rules for address-list files. Raises
+    ValueError on any violation. (Per-file parse errors and invalid order
+    values are raised separately by build_address_list/parse_address_file.)"""
+    conflicts = [
+        ("recipient_file", "recipient"),
+        ("from_file", "from_address"),
+        ("journal_file", "journal_address"),
+    ]
+    for file_key, single_key in conflicts:
+        if file_key in args and single_key in args:
+            raise ValueError(f"{file_key} and {single_key} are mutually exclusive; use one.")
+
+    if "recipient" not in args and "recipient_file" not in args:
+        raise ValueError("Provide recipient= or recipient_file=.")
+
+    if "recipient_file" in args and not offline_mode and "lb_host" not in args:
+        raise ValueError(
+            "recipient_file requires lb_host= (a fixed relay) or eml_out_dir= "
+            "(offline output); a multi-domain recipient file has no single MX target."
+        )
+
+    if "journal_file" in args and args.get("journal", "false").lower() != "true":
+        raise ValueError("journal_file requires journal=true.")
+
+    for field in ("recipient", "from", "journal"):
+        if f"{field}_file_order" in args and f"{field}_file" not in args:
+            raise ValueError(f"{field}_file_order was given without {field}_file.")
+
+
 class BodyPlan:
     """Per-message body-prefix selection from a corpus of text files."""
 
@@ -1163,6 +1193,9 @@ def main():
         debug_enabled, \
         attachment_plan, \
         body_plan, \
+        recipient_list, \
+        from_list, \
+        journal_list, \
         offline_mode, \
         eml_out_dir, \
         auth_username, \
@@ -1171,8 +1204,10 @@ def main():
     args = parse_args()
     load_dotenv(dotenv_path=args.get("dotenv_path"))
 
-    required = ["recipient", "port", "threads", "messages"]
+    required = ["port", "threads", "messages"]
     missing = [key for key in required if key not in args]
+    if "recipient" not in args and "recipient_file" not in args:
+        missing.append("recipient")
     if missing:
         print(
             f"\n{Fore.RED}✗ Missing required parameter(s): {', '.join(missing)}{Style.RESET_ALL}\n"
@@ -1190,7 +1225,7 @@ def main():
     log_dir = args.get("logfile_output", "./logs")
     os.makedirs(log_dir, exist_ok=True)
 
-    recipient = args["recipient"]
+    recipient = args.get("recipient")
     lb_host = args.get("lb_host")
     eml_out_dir = args.get("eml_out_dir")
     offline_mode = eml_out_dir is not None
@@ -1252,6 +1287,15 @@ def main():
         body_plan = build_body_plan(args)
     except Exception as e:
         print(f"{Fore.RED}✗ Body text configuration error: {e}{Style.RESET_ALL}")
+        sys.exit(1)
+
+    try:
+        validate_address_list_args(args, offline_mode)
+        recipient_list = build_address_list(args, "recipient")
+        from_list = build_address_list(args, "from")
+        journal_list = build_address_list(args, "journal")
+    except (ValueError, FileNotFoundError) as e:
+        print(f"{Fore.RED}✗ Address list configuration error: {e}{Style.RESET_ALL}")
         sys.exit(1)
 
     loggers = setup_logging()

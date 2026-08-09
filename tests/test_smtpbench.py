@@ -1164,5 +1164,77 @@ class TestAddressListGlobals:
         assert cli.journal_list is None
 
 
+class TestAddressListValidation:
+    def _mk(self, tmp_path, name="l.txt", body="a@x.com\nb@x.com\n"):
+        f = tmp_path / name
+        f.write_text(body)
+        return str(f)
+
+    def test_recipient_file_and_recipient_conflict(self, tmp_path):
+        from smtpbench.cli import validate_address_list_args
+
+        args = {"recipient": "x@y.com", "recipient_file": self._mk(tmp_path), "lb_host": "relay"}
+        with pytest.raises(ValueError, match="recipient_file"):
+            validate_address_list_args(args, offline_mode=False)
+
+    def test_from_file_and_from_address_conflict(self, tmp_path):
+        from smtpbench.cli import validate_address_list_args
+
+        args = {"recipient": "x@y.com", "from_file": self._mk(tmp_path), "from_address": "s@y.com"}
+        with pytest.raises(ValueError, match="from_file"):
+            validate_address_list_args(args, offline_mode=False)
+
+    def test_journal_file_and_journal_address_conflict(self, tmp_path):
+        from smtpbench.cli import validate_address_list_args
+
+        args = {
+            "recipient": "x@y.com",
+            "journal": "true",
+            "journal_file": self._mk(tmp_path),
+            "journal_address": "j@y.com",
+        }
+        with pytest.raises(ValueError, match="journal_file"):
+            validate_address_list_args(args, offline_mode=False)
+
+    def test_neither_recipient_nor_recipient_file(self, tmp_path):
+        from smtpbench.cli import validate_address_list_args
+
+        with pytest.raises(ValueError, match="recipient"):
+            validate_address_list_args({}, offline_mode=False)
+
+    def test_recipient_file_requires_lb_host_or_offline(self, tmp_path):
+        from smtpbench.cli import validate_address_list_args
+
+        args = {"recipient_file": self._mk(tmp_path)}
+        with pytest.raises(ValueError, match="lb_host"):
+            validate_address_list_args(args, offline_mode=False)
+
+    def test_recipient_file_ok_with_lb_host(self, tmp_path):
+        from smtpbench.cli import validate_address_list_args
+
+        args = {"recipient_file": self._mk(tmp_path), "lb_host": "relay"}
+        validate_address_list_args(args, offline_mode=False)  # no raise
+
+    def test_recipient_file_ok_offline_without_lb_host(self, tmp_path):
+        from smtpbench.cli import validate_address_list_args
+
+        args = {"recipient_file": self._mk(tmp_path)}
+        validate_address_list_args(args, offline_mode=True)  # no raise
+
+    def test_journal_file_requires_journal_true(self, tmp_path):
+        from smtpbench.cli import validate_address_list_args
+
+        args = {"recipient": "x@y.com", "journal_file": self._mk(tmp_path)}
+        with pytest.raises(ValueError, match="journal=true"):
+            validate_address_list_args(args, offline_mode=False)
+
+    def test_orphan_order_key_raises(self, tmp_path):
+        from smtpbench.cli import validate_address_list_args
+
+        args = {"recipient": "x@y.com", "from_file_order": "random"}
+        with pytest.raises(ValueError, match="from_file_order"):
+            validate_address_list_args(args, offline_mode=False)
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
