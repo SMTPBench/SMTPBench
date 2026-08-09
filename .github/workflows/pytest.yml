@@ -41,12 +41,17 @@ jobs:
           python -m pip install --upgrade pip
           pip install ".[dev]"
       - name: Run unit tests
+        env:
+          # Distinct data-file name so this suite's coverage doesn't collide with
+          # the integration suite's when both artifacts are downloaded together in
+          # the coverage job. `coverage combine` merges any `.coverage.*` file.
+          COVERAGE_FILE: .coverage.unit
         run: pytest -v -m "not integration" --cov=smtpbench --cov-report= --cov-fail-under=0
       - name: Upload unit coverage data
         uses: actions/upload-artifact@v4
         with:
           name: coverage-unit
-          path: .coverage*
+          path: .coverage.unit
           include-hidden-files: true
           retention-days: 1
 
@@ -69,13 +74,17 @@ jobs:
       - name: Pull mail server image
         run: docker pull ghcr.io/lets-qa/local-test-mail-server:main
       - name: Run integration tests
+        env:
+          # Distinct data-file name (see unit-tests job) so the two suites' coverage
+          # files coexist in the coverage job and both get combined.
+          COVERAGE_FILE: .coverage.integration
         run: pytest -v -m "integration" --cov=smtpbench --cov-report= --cov-fail-under=0 --tb=short
       - name: Upload integration coverage data
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: coverage-integration
-          path: .coverage*
+          path: .coverage.integration
           include-hidden-files: true
           retention-days: 1
       - name: Fix permissions for artifact upload
@@ -112,15 +121,19 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: coverage-unit
-      - name: Per-suite report (informational)
-        run: |
-          echo "== Unit-only coverage =="
-          coverage report || true
       - name: Download integration coverage
         uses: actions/download-artifact@v4
         with:
           name: coverage-integration
+      - name: Per-suite report (informational)
+        run: |
+          echo "== Unit-only coverage =="
+          coverage report --data-file=.coverage.unit || true
+          echo "== Integration-only coverage =="
+          coverage report --data-file=.coverage.integration || true
       - name: Combined coverage gate
         run: |
-          coverage combine
+          # Merge both suites' data files (.coverage.unit + .coverage.integration)
+          # into a single .coverage, then apply the fail_under gate from pyproject.
+          coverage combine .coverage.unit .coverage.integration
           coverage report
