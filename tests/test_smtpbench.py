@@ -1070,5 +1070,55 @@ class TestAddressList:
         assert p2.select(None) == "d@x.com"
 
 
+class TestParseAddressFile:
+    def test_parses_one_per_line_skips_blanks_and_comments(self, tmp_path):
+        from smtpbench.cli import parse_address_file
+
+        f = tmp_path / "list.txt"
+        f.write_text(
+            "# primary\n"
+            "alice@example.com\n"
+            "\n"
+            "  bob@example.com  \n"
+            "# trailing comment\n"
+            "carol@example.com\n"
+        )
+        assert parse_address_file(str(f), "recipient") == [
+            "alice@example.com",
+            "bob@example.com",
+            "carol@example.com",
+        ]
+
+    def test_missing_file_raises(self, tmp_path):
+        from smtpbench.cli import parse_address_file
+
+        with pytest.raises(FileNotFoundError):
+            parse_address_file(str(tmp_path / "nope.txt"), "recipient")
+
+    def test_empty_after_filtering_raises(self, tmp_path):
+        from smtpbench.cli import parse_address_file
+
+        f = tmp_path / "empty.txt"
+        f.write_text("# only comments\n\n   \n")
+        with pytest.raises(ValueError, match="no valid addresses"):
+            parse_address_file(str(f), "from")
+
+    def test_multi_at_address_raises_with_file_and_line(self, tmp_path):
+        from smtpbench.cli import parse_address_file
+
+        f = tmp_path / "bad.txt"
+        f.write_text("alice@example.com\nbob@@example.com\n")
+        with pytest.raises(ValueError, match="line 2"):
+            parse_address_file(str(f), "recipient")
+
+    def test_no_at_address_raises(self, tmp_path):
+        from smtpbench.cli import parse_address_file
+
+        f = tmp_path / "bad.txt"
+        f.write_text("not-an-email\n")
+        with pytest.raises(ValueError):
+            parse_address_file(str(f), "journal")
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

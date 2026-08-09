@@ -652,6 +652,34 @@ class AddressList:
         return rng.choice(self.addresses)
 
 
+def _is_valid_address(addr):
+    """Exactly one '@' with non-empty local and domain parts (the invariant
+    mx_lookup_all enforces on the single recipient)."""
+    parts = addr.split("@")
+    return len(parts) == 2 and bool(parts[0]) and bool(parts[1])
+
+
+def parse_address_file(path, field_label):
+    """Read one address per line. Strip whitespace; skip blank lines and lines
+    beginning with '#'. Validate every remaining address (exactly one '@').
+    Raise FileNotFoundError if missing, ValueError if no valid addresses remain
+    or any address is malformed (message names the file, 1-based line, value)."""
+    if not os.path.isfile(path):
+        raise FileNotFoundError(f"{field_label} address file not found: {path}")
+    addresses = []
+    with open(path, encoding="utf-8", errors="replace") as fh:
+        for lineno, raw in enumerate(fh, start=1):
+            line = raw.strip()
+            if not line or line.startswith("#"):
+                continue
+            if not _is_valid_address(line):
+                raise ValueError(f"Invalid {field_label} address in {path} line {lineno}: {line!r}")
+            addresses.append(line)
+    if not addresses:
+        raise ValueError(f"{field_label} address file has no valid addresses: {path}")
+    return addresses
+
+
 class BodyPlan:
     """Per-message body-prefix selection from a corpus of text files."""
 
