@@ -216,7 +216,7 @@ smtpbench --help
 | `rate` | *(none)* | Whole-run cap in messages/sec, enforced by a shared token bucket. Mutually exclusive with `delay=`/`random_delay=`. |
 | `username` | *(none)* | SMTP AUTH username. Prefer `SMTPBENCH_USER` env var or `.env` over CLI (CLI credentials are visible in `ps`/shell history). |
 | `password` | *(none)* | SMTP AUTH password. Prefer `SMTPBENCH_PASS` env var or `.env` over CLI. |
-| `dotenv_path` | `.env` | Path to a `.env` file for credential resolution (default: `.env` in current directory). |
+| `dotenv_path` | *(auto-discovered)* | Path to a `.env` file for credential resolution. When unset, python-dotenv searches the current directory and its parents for a `.env` file. |
 | `body_text_dir` | *(none)* | Prefix each message body with a randomly selected text file from this directory. Selection is deterministic per run (seeded from run UUID). Only the chosen filename and character length are logged — never the excerpt text. |
 | `eml_out_dir` | *(none)* | Offline mode: write each composed message to this directory as `{sha256}.eml` instead of sending over SMTP. Skips DNS/MX lookup and banner check. Identical message bytes deduplicate to a single file. Composes with attachments and `body_text_dir`. |
 
@@ -232,7 +232,7 @@ export SMTPBENCH_USER=myuser
 export SMTPBENCH_PASS=mypassword
 smtpbench recipient=test@example.com port=587 threads=5 messages=10
 
-# Or via a .env file (default path: .env in current directory)
+# Or via a .env file (auto-discovered in the current directory or its parents)
 echo "SMTPBENCH_USER=myuser" >> .env
 echo "SMTPBENCH_PASS=mypassword" >> .env
 smtpbench recipient=test@example.com port=587 threads=5 messages=10
@@ -412,8 +412,8 @@ After every run, SMTPBench writes a `summary_{timestamp}_{uuid}.json` file to th
 Use the summary file to gate CI pipelines on latency budgets:
 
 ```bash
-# Fail the build if p95 latency exceeds 2s
-python -c "import json,sys; d=json.load(open(sys.argv[1])); sys.exit(1 if (d['latency_ms'] or {}).get('p95',0) > 2000 else 0)" logs/summary_*.json
+# Fail the build if p95 latency exceeds 2s (checks the newest summary file)
+python -c "import json,glob,os,sys; f=max(glob.glob('logs/summary_*.json'), key=os.path.getmtime); d=json.load(open(f)); sys.exit(1 if (d['latency_ms'] or {}).get('p95',0) > 2000 else 0)"
 ```
 
 ### Email Message Format
@@ -596,7 +596,7 @@ smtpbench \
 
 ## Requirements
 
-- Python 3.8 or higher
+- Python 3.9 or higher
 - Dependencies (automatically installed):
   - `dnspython>=2.0.0`
   - `tqdm>=4.0.0`

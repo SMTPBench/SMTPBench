@@ -19,6 +19,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - **Development status**: promoted from Beta to Production/Stable.
+- **Minimum Python raised to 3.9** to match the `setuptools>=77.0.0` build requirement.
+- **Credentials fail fast**: passing only one of `username=`/`password=` (or `SMTPBENCH_USER`/`SMTPBENCH_PASS`) now aborts with a clear error instead of failing opaquely inside `smtplib.login` on every send.
+- **`attachment_filename` + `attachment_dir` rejected**: the combination was silently ignored (corpus files keep their own names); it now raises a configuration error.
+- **Summary totals derive from per-MX final outcomes**: `totals.sent`/`totals.failed` and `success_rate` now reflect per-message final outcomes (consistent with `per_mx`) instead of counting each retried attempt as a separate failure. `totals.retried` still reports the attempt-level retry count.
+
+### Security
+- **Credentials no longer leak under `debug=true`**: `smtplib`'s wire debug is disabled for the duration of `server.login()`, so the (base64, reversible) SASL AUTH exchange is never written to the terminal. The design doc's prior claim that base64 SASL is "obscured" was incorrect and has been corrected.
 
 ### Dependencies
 - Added `python-dotenv>=1.0.0`.

@@ -7,7 +7,7 @@ name = "smtpbench"
 version = "1.2.0"
 description = "A robust SMTP load testing and benchmarking tool with MX failover and detailed logging"
 readme = "README.md"
-requires-python = ">=3.8"
+requires-python = ">=3.9"
 license = "MIT"
 authors = [
     {name = "Randall Morse", email = "rmorse@lets.qa"}
@@ -23,7 +23,6 @@ classifiers = [
     "Topic :: Communications :: Email",
     "Topic :: Software Development :: Testing",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.8",
     "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",

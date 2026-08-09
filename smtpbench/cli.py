@@ -113,7 +113,7 @@ def show_help():
     {Fore.YELLOW}eml_out_dir{Style.RESET_ALL}=PATH         Offline: write EML files here (sha256-named) instead of sending
     {Fore.YELLOW}username{Style.RESET_ALL}=USER             SMTP AUTH username (prefer env/.env over CLI)
     {Fore.YELLOW}password{Style.RESET_ALL}=PASS             SMTP AUTH password (prefer env/.env over CLI)
-    {Fore.YELLOW}dotenv_path{Style.RESET_ALL}=PATH          Path to a .env file (default: .env in cwd)
+    {Fore.YELLOW}dotenv_path{Style.RESET_ALL}=PATH          Path to a .env file (default: auto-discover in cwd or parents)
 
 {Fore.YELLOW}ATTACHMENT SAFETY:{Style.RESET_ALL}
     Attachments multiply outbound volume. SMTPBench prints estimated total
@@ -323,9 +323,18 @@ def compute_percentiles(samples):
 
 
 def write_summary(config, elapsed_seconds):
-    """Write summary_{timestamp}_{uuid}.json into log_dir; return its path."""
-    total_attempts = success_count + fail_count
-    success_rate = (success_count / total_attempts * 100) if total_attempts > 0 else 0
+    """Write summary_{timestamp}_{uuid}.json into log_dir; return its path.
+
+    Totals are derived from per_mx_stats (per-message final outcomes) so the
+    summary is internally consistent. This differs from the live counters:
+    fail_count counts every failed attempt including retries, whereas
+    per_mx_stats records one outcome per message. retry_count is reported
+    separately as the attempt-level retry total.
+    """
+    sent = sum(bucket["sent"] for bucket in per_mx_stats.values())
+    failed = sum(bucket["failed"] for bucket in per_mx_stats.values())
+    total_messages = sent + failed
+    success_rate = (sent / total_messages * 100) if total_messages > 0 else 0
     summary = {
         "run_uuid": run_uuid,
         "client_hostname": client_hostname,
@@ -333,8 +342,8 @@ def write_summary(config, elapsed_seconds):
         "elapsed_seconds": round(elapsed_seconds, 2),
         "config": config,
         "totals": {
-            "sent": success_count,
-            "failed": fail_count,
+            "sent": sent,
+            "failed": failed,
             "retried": retry_count,
             "success_rate": round(success_rate, 1),
         },
@@ -580,6 +589,11 @@ def build_attachment_plan(args):
         return plan
 
     # attachment_dir
+    if "attachment_filename" in args:
+        raise ValueError(
+            "attachment_filename is not supported with attachment_dir; "
+            "each file keeps its own corpus name."
+        )
     if not os.path.isdir(attachment_dir):
         raise NotADirectoryError(f"Attachment directory not found: {attachment_dir}")
     corpus = []
@@ -721,10 +735,20 @@ def resolve_credentials(args):
     cli_user = args.get("username")
     cli_pass = args.get("password")
     if cli_user or cli_pass:
+        if not (cli_user and cli_pass):
+            raise ValueError(
+                "Both username= and password= must be provided together "
+                "(got only one). SMTP AUTH needs a complete credential pair."
+            )
         return cli_user, cli_pass, "cli"
     env_user = os.environ.get("SMTPBENCH_USER")
     env_pass = os.environ.get("SMTPBENCH_PASS")
     if env_user or env_pass:
+        if not (env_user and env_pass):
+            raise ValueError(
+                "Both SMTPBENCH_USER and SMTPBENCH_PASS must be set together "
+                "(got only one). SMTP AUTH needs a complete credential pair."
+            )
         return env_user, env_pass, "env"
     return None, None, None
 
@@ -776,7 +800,16 @@ def try_send_to_mx_hosts(from_address, recipients, msg, port, tls_mode, transact
                         debug_logger.debug("Starting TLS...")
                     server.starttls()
                 if auth_username:
-                    server.login(auth_username, auth_password)
+                    # Suppress smtplib wire debug around AUTH: set_debuglevel(1)
+                    # would print the SASL exchange (base64, trivially reversible)
+                    # to stderr, leaking credentials. Restore debug afterward.
+                    if debug_enabled:
+                        server.set_debuglevel(0)
+                    try:
+                        server.login(auth_username, auth_password)
+                    finally:
+                        if debug_enabled:
+                            server.set_debuglevel(1)
                 if debug_enabled:
                     debug_logger.debug(f"Sending email to recipients: {recipients}")
                 server.sendmail(from_address, recipients, msg.as_string())
@@ -1126,7 +1159,11 @@ def main():
     journal_enabled = args.get("journal", "false").lower() == "true"
     journal_address = args.get("journal_address", recipient)
     debug_enabled = args.get("debug", "false").lower() == "true"
-    auth_username, auth_password, cred_source = resolve_credentials(args)
+    try:
+        auth_username, auth_password, cred_source = resolve_credentials(args)
+    except ValueError as e:
+        print(f"{Fore.RED}✗ Credential configuration error: {e}{Style.RESET_ALL}")
+        sys.exit(1)
     if cred_source == "cli":
         print(
             f"{Fore.YELLOW}⚠ Credentials passed on the CLI are visible in ps/top and shell "
@@ -1219,8 +1256,13 @@ def main():
         print("SMTP Hosts Tried: (offline — wrote EML files)")
     else:
         print(f"SMTP Hosts Tried: {', '.join(mx_hosts)}")
-    print(f"Total Sent: {success_count}")
-    print(f"Total Failed: {fail_count}")
+    # Report per-message final outcomes (consistent with the summary JSON and
+    # per_mx). fail_count is attempt-level (counts retries); retry_count is
+    # surfaced separately below.
+    total_sent = sum(bucket["sent"] for bucket in per_mx_stats.values())
+    total_failed = sum(bucket["failed"] for bucket in per_mx_stats.values())
+    print(f"Total Sent: {total_sent}")
+    print(f"Total Failed: {total_failed}")
     print(f"Total Retried: {retry_count}")
     print(f"Elapsed Time: {elapsed:.2f} seconds")
     print(f"Logs saved in: {os.path.abspath(log_dir)}")

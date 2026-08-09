@@ -208,6 +208,15 @@ class TestAttachmentPlan:
         with pytest.raises(ValueError):
             build_attachment_plan({"attachment_dir": str(tmp_path)})
 
+    def test_dir_mode_rejects_attachment_filename(self, tmp_path):
+        from smtpbench.cli import build_attachment_plan
+
+        (tmp_path / "a.txt").write_bytes(b"aaa")
+        with pytest.raises(ValueError, match="attachment_filename is not supported"):
+            build_attachment_plan(
+                {"attachment_dir": str(tmp_path), "attachment_filename": "override.bin"}
+            )
+
     def test_expected_bytes_per_message(self):
         from smtpbench.cli import build_attachment_plan
 
@@ -560,6 +569,28 @@ class TestCredentials:
         monkeypatch.delenv("SMTPBENCH_PASS", raising=False)
         assert resolve_credentials({}) == (None, None, None)
 
+    def test_partial_cli_credentials_rejected(self, monkeypatch):
+        import pytest
+
+        from smtpbench.cli import resolve_credentials
+
+        monkeypatch.delenv("SMTPBENCH_USER", raising=False)
+        monkeypatch.delenv("SMTPBENCH_PASS", raising=False)
+        with pytest.raises(ValueError, match="username= and password="):
+            resolve_credentials({"username": "cliuser"})
+        with pytest.raises(ValueError, match="username= and password="):
+            resolve_credentials({"password": "clipass"})
+
+    def test_partial_env_credentials_rejected(self, monkeypatch):
+        import pytest
+
+        from smtpbench.cli import resolve_credentials
+
+        monkeypatch.setenv("SMTPBENCH_USER", "envuser")
+        monkeypatch.delenv("SMTPBENCH_PASS", raising=False)
+        with pytest.raises(ValueError, match="SMTPBENCH_USER and SMTPBENCH_PASS"):
+            resolve_credentials({})
+
     def test_login_called_when_username_set(self):
         from unittest.mock import MagicMock
 
@@ -600,6 +631,44 @@ class TestCredentials:
             msg = create_message("to@example.com", "from@example.com", 1, 1, [])
             try_send_to_mx_hosts("from@example.com", ["to@example.com"], msg, 587, "none", 20)
         fake_server.login.assert_not_called()
+
+    def test_debug_suppressed_around_login(self):
+        """When debug is on, wire debug is off during AUTH and restored after.
+
+        Guards the redaction invariant: smtplib's set_debuglevel(1) would print
+        the (reversible base64) SASL AUTH exchange to stderr. Order must be
+        set_debuglevel(0) -> login(...) -> set_debuglevel(1).
+        """
+        from unittest.mock import MagicMock, call
+
+        from smtpbench import cli
+        from smtpbench.cli import create_message, try_send_to_mx_hosts
+
+        cli.mx_hosts = ["mx.example.com"]
+        cli.auth_username = "user"
+        cli.auth_password = "secret"
+        cli.debug_enabled = True
+        cli.debug_logger = MagicMock()
+        parent = MagicMock()  # tracks child-call order via method_calls
+        fake_server = parent.server
+        cm = MagicMock()
+        cm.__enter__.return_value = fake_server
+        cm.__exit__.return_value = False
+        with patch("smtplib.SMTP", return_value=cm):
+            msg = create_message("to@example.com", "from@example.com", 1, 1, [])
+            host, error = try_send_to_mx_hosts(
+                "from@example.com", ["to@example.com"], msg, 587, "none", 20
+            )
+        assert error is None
+        names = [c for c in fake_server.method_calls]
+        # The debug-off, login, debug-on triple appears as a contiguous run.
+        triple = [
+            call.set_debuglevel(0),
+            call.login("user", "secret"),
+            call.set_debuglevel(1),
+        ]
+        start = names.index(call.set_debuglevel(0))
+        assert names[start : start + 3] == triple
 
 
 class TestRateLimiter:
@@ -663,14 +732,10 @@ class TestSummary:
         assert cli.per_mx_stats["mx1.example.com"] == {"sent": 1, "failed": 1}
 
     def test_write_summary_produces_valid_json(self, tmp_path):
-        import json
-
         from smtpbench import cli
         from smtpbench.cli import write_summary
 
         cli.log_dir = str(tmp_path)
-        cli.success_count = 3
-        cli.fail_count = 1
         cli.retry_count = 2
         cli.latency_samples = [0.1, 0.2, 0.3]
         cli.per_mx_stats = {"mx1": {"sent": 3, "failed": 1}}
@@ -681,10 +746,40 @@ class TestSummary:
         assert data["run_uuid"] == cli.run_uuid
         assert data["totals"]["sent"] == 3
         assert data["totals"]["failed"] == 1
+        assert data["totals"]["retried"] == 2
         assert data["config"]["auth"] is True
         assert "password" not in json.dumps(data)
         assert data["latency_ms"]["max"] == 300
         assert data["per_mx"]["mx1"] == {"sent": 3, "failed": 1}
+
+    def test_write_summary_totals_derive_from_per_mx_not_attempts(self, tmp_path):
+        """totals reflect per-message final outcomes, not attempt-level counters.
+
+        A message that failed twice then succeeded leaves fail_count=2 (attempts)
+        but per_mx failed=0 (final outcome). The summary must report the
+        per-message view so totals and per_mx never disagree.
+        """
+        from smtpbench import cli
+        from smtpbench.cli import write_summary
+
+        cli.log_dir = str(tmp_path)
+        # Attempt-level live counters (would inflate 'failed' if used directly).
+        cli.success_count = 1
+        cli.fail_count = 2
+        cli.retry_count = 2
+        cli.latency_samples = [0.05]
+        # Per-message final outcomes across two hosts.
+        cli.per_mx_stats = {
+            "mx1": {"sent": 1, "failed": 0},
+            "mx2": {"sent": 4, "failed": 1},
+        }
+        path = write_summary({"auth": False}, 1.0)
+        with open(path) as f:
+            data = json.load(f)
+        assert data["totals"]["sent"] == 5
+        assert data["totals"]["failed"] == 1
+        assert data["totals"]["retried"] == 2
+        assert data["totals"]["success_rate"] == round(5 / 6 * 100, 1)
 
 
 class TestBodyPlan:
