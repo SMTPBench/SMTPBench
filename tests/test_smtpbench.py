@@ -1027,5 +1027,48 @@ class TestOfflineMode:
         assert cli.per_mx_stats.get("file", {}).get("failed") == 1
 
 
+class TestAddressList:
+    def test_random_is_deterministic_for_seeded_rng(self):
+        import random
+
+        from smtpbench.cli import AddressList
+
+        addrs = ["a@x.com", "b@x.com", "c@x.com"]
+        plan = AddressList(addrs, "random")
+        rng1 = random.Random("seed-1")
+        rng2 = random.Random("seed-1")
+        picks1 = [plan.select(rng1) for _ in range(10)]
+        picks2 = [plan.select(rng2) for _ in range(10)]
+        assert picks1 == picks2
+        assert all(p in addrs for p in picks1)
+
+    def test_roundrobin_cycles_evenly_and_wraps(self):
+        from smtpbench.cli import AddressList
+
+        addrs = ["a@x.com", "b@x.com", "c@x.com"]
+        plan = AddressList(addrs, "roundrobin")
+        # RNG is unused in roundrobin mode; pass a dummy.
+        picks = [plan.select(rng=None) for _ in range(7)]
+        assert picks == [
+            "a@x.com",
+            "b@x.com",
+            "c@x.com",
+            "a@x.com",
+            "b@x.com",
+            "c@x.com",
+            "a@x.com",
+        ]
+
+    def test_roundrobin_instances_have_independent_counters(self):
+        from smtpbench.cli import AddressList
+
+        p1 = AddressList(["a@x.com", "b@x.com"], "roundrobin")
+        p2 = AddressList(["c@x.com", "d@x.com"], "roundrobin")
+        assert p1.select(None) == "a@x.com"
+        assert p2.select(None) == "c@x.com"  # p2 not advanced by p1
+        assert p1.select(None) == "b@x.com"
+        assert p2.select(None) == "d@x.com"
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

@@ -628,6 +628,30 @@ def build_attachment_plan(args):
     return plan
 
 
+class AddressList:
+    """Per-message address selection from a parsed list of addresses.
+
+    order="random":     rng.choice per message (reproducible for a fixed seed).
+    order="roundrobin": cycle the list evenly across the whole run; the shared
+                        index is guarded by a per-instance lock, so the three
+                        address fields' round-robin counters stay independent.
+    """
+
+    def __init__(self, addresses, order):
+        self.addresses = addresses  # non-empty list[str]
+        self.order = order  # "random" | "roundrobin"
+        self._idx = 0
+        self._lock = threading.Lock()
+
+    def select(self, rng):
+        if self.order == "roundrobin":
+            with self._lock:
+                addr = self.addresses[self._idx % len(self.addresses)]
+                self._idx += 1
+            return addr
+        return rng.choice(self.addresses)
+
+
 class BodyPlan:
     """Per-message body-prefix selection from a corpus of text files."""
 
