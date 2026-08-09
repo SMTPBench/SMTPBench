@@ -1229,6 +1229,16 @@ def main():
     lb_host = args.get("lb_host")
     eml_out_dir = args.get("eml_out_dir")
     offline_mode = eml_out_dir is not None
+
+    try:
+        validate_address_list_args(args, offline_mode)
+        recipient_list = build_address_list(args, "recipient")
+        from_list = build_address_list(args, "from")
+        journal_list = build_address_list(args, "journal")
+    except (ValueError, FileNotFoundError) as e:
+        print(f"{Fore.RED}✗ Address list configuration error: {e}{Style.RESET_ALL}")
+        sys.exit(1)
+
     if offline_mode:
         os.makedirs(eml_out_dir, exist_ok=True)
         mx_hosts = []
@@ -1287,15 +1297,6 @@ def main():
         body_plan = build_body_plan(args)
     except Exception as e:
         print(f"{Fore.RED}✗ Body text configuration error: {e}{Style.RESET_ALL}")
-        sys.exit(1)
-
-    try:
-        validate_address_list_args(args, offline_mode)
-        recipient_list = build_address_list(args, "recipient")
-        from_list = build_address_list(args, "from")
-        journal_list = build_address_list(args, "journal")
-    except (ValueError, FileNotFoundError) as e:
-        print(f"{Fore.RED}✗ Address list configuration error: {e}{Style.RESET_ALL}")
         sys.exit(1)
 
     loggers = setup_logging()
