@@ -86,7 +86,7 @@ def show_help():
     smtpbench [OPTIONS]
 
 {Fore.GREEN}REQUIRED PARAMETERS:{Style.RESET_ALL}
-    {Fore.YELLOW}recipient{Style.RESET_ALL}=EMAIL          Target email address
+    {Fore.YELLOW}recipient{Style.RESET_ALL}=EMAIL          Target email address (or use recipient_file= below)
     {Fore.YELLOW}port{Style.RESET_ALL}=NUMBER              SMTP port (25, 587, 465, etc.)
     {Fore.YELLOW}threads{Style.RESET_ALL}=NUMBER           Number of concurrent threads
     {Fore.YELLOW}messages{Style.RESET_ALL}=NUMBER          Messages per thread (0 for infinite)
