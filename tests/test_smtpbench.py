@@ -1120,5 +1120,40 @@ class TestParseAddressFile:
             parse_address_file(str(f), "journal")
 
 
+class TestBuildAddressList:
+    def test_absent_key_returns_none(self):
+        from smtpbench.cli import build_address_list
+
+        assert build_address_list({}, "recipient") is None
+
+    def test_builds_with_default_random_order(self, tmp_path):
+        from smtpbench.cli import build_address_list
+
+        f = tmp_path / "r.txt"
+        f.write_text("a@x.com\nb@x.com\n")
+        plan = build_address_list({"recipient_file": str(f)}, "recipient")
+        assert plan is not None
+        assert plan.order == "random"
+        assert plan.addresses == ["a@x.com", "b@x.com"]
+
+    def test_reads_explicit_order(self, tmp_path):
+        from smtpbench.cli import build_address_list
+
+        f = tmp_path / "s.txt"
+        f.write_text("a@x.com\n")
+        plan = build_address_list({"from_file": str(f), "from_file_order": "roundrobin"}, "from")
+        assert plan.order == "roundrobin"
+
+    def test_invalid_order_raises(self, tmp_path):
+        from smtpbench.cli import build_address_list
+
+        f = tmp_path / "j.txt"
+        f.write_text("a@x.com\n")
+        with pytest.raises(ValueError, match="roundrobin"):
+            build_address_list(
+                {"journal_file": str(f), "journal_file_order": "sideways"}, "journal"
+            )
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

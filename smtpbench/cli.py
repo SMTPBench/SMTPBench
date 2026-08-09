@@ -680,6 +680,25 @@ def parse_address_file(path, field_label):
     return addresses
 
 
+ADDRESS_FILE_ORDERS = ("random", "roundrobin")
+
+
+def build_address_list(args, field):
+    """Build an AddressList for one field ('recipient'|'from'|'journal') from
+    '<field>_file' and '<field>_file_order' (default 'random'), or None if the
+    '<field>_file' key is absent."""
+    path = args.get(f"{field}_file")
+    if not path:
+        return None
+    order = args.get(f"{field}_file_order", "random")
+    if order not in ADDRESS_FILE_ORDERS:
+        raise ValueError(
+            f"Invalid {field}_file_order '{order}'; valid values: {', '.join(ADDRESS_FILE_ORDERS)}"
+        )
+    addresses = parse_address_file(path, field)
+    return AddressList(addresses, order)
+
+
 class BodyPlan:
     """Per-message body-prefix selection from a corpus of text files."""
 
