@@ -31,6 +31,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Dependencies
 - Added `python-dotenv>=1.0.0`.
+- Pinned the dev dependency `ruff` to `==0.16.1` so local, CI, and deploy formatting never diverge (newer Ruff versions reformat Python inside Markdown, which broke the `deploy.sh` format gate).
 
 ## [1.1.1] - 2026-08-03
 
