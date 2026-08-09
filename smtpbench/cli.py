@@ -239,6 +239,8 @@ def log_json(
     recipients=None,
     attachments=None,
     body_source=None,
+    from_used=None,
+    journal_used=None,
 ):
     """Log structured JSON for each transaction."""
     entry = {
@@ -257,6 +259,8 @@ def log_json(
             {k: v for k, v in a.items() if k != "content"} for a in (attachments or [])
         ],
         "body_source": body_source,
+        "from_used": from_used,
+        "journal_used": journal_used,
         "error": str(error) if error else None,
     }
     logger.info(json.dumps(entry))
@@ -941,6 +945,7 @@ def send_email(
 ):
     """Send a single test email, trying all MX hosts if needed."""
     global success_count, fail_count, retry_count, stop_requested, journal_enabled, journal_address
+    global recipient_list, from_list, journal_list
 
     rng = random.Random(f"{run_uuid}:{thread_id}:{message_id}")
     attachment_configs = attachment_plan.select_for_message(rng) if attachment_plan else []
@@ -951,14 +956,19 @@ def send_email(
         if body_choice
         else None
     )
+    eff_recipient = recipient_list.select(rng) if recipient_list else recipient
+    eff_from = from_list.select(rng) if from_list else from_address
+    eff_journal = (
+        journal_list.select(rng) if (journal_enabled and journal_list) else journal_address
+    )
     msg = create_message(
-        recipient, from_address, thread_id, message_id, attachment_configs, body_prefix
+        eff_recipient, eff_from, thread_id, message_id, attachment_configs, body_prefix
     )
     attachments = attachment_metadata(attachment_configs)
 
-    recipients = [recipient]
-    if journal_enabled and journal_address:
-        recipients.append(journal_address)
+    recipients = [eff_recipient]
+    if journal_enabled and eff_journal:
+        recipients.append(eff_journal)
 
     if offline_mode:
         start_time = time.time()
@@ -984,6 +994,8 @@ def send_email(
                 recipients=recipients,
                 attachments=attachments,
                 body_source=body_source,
+                from_used=eff_from,
+                journal_used=(eff_journal if journal_enabled else None),
             )
         except Exception as e:
             duration = time.time() - start_time
@@ -1007,6 +1019,8 @@ def send_email(
                 recipients=recipients,
                 attachments=attachments,
                 body_source=body_source,
+                from_used=eff_from,
+                journal_used=(eff_journal if journal_enabled else None),
             )
         return
 
@@ -1015,7 +1029,7 @@ def send_email(
         attempt += 1
         start_time = time.time()
         mx_host_used, error = try_send_to_mx_hosts(
-            from_address, recipients, msg, port, tls_mode, transaction_timeout
+            eff_from, recipients, msg, port, tls_mode, transaction_timeout
         )
 
         if error is None:
@@ -1039,6 +1053,8 @@ def send_email(
                 recipients=recipients,
                 attachments=attachments,
                 body_source=body_source,
+                from_used=eff_from,
+                journal_used=(eff_journal if journal_enabled else None),
             )
             return
         else:
@@ -1062,6 +1078,8 @@ def send_email(
                 recipients=recipients,
                 attachments=attachments,
                 body_source=body_source,
+                from_used=eff_from,
+                journal_used=(eff_journal if journal_enabled else None),
             )
 
             if attempt <= max_retries:
@@ -1080,6 +1098,8 @@ def send_email(
                     recipients=recipients,
                     attachments=attachments,
                     body_source=body_source,
+                    from_used=eff_from,
+                    journal_used=(eff_journal if journal_enabled else None),
                 )
                 time.sleep(retry_delay)
             else:

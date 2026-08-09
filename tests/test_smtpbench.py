@@ -1236,5 +1236,122 @@ class TestAddressListValidation:
             validate_address_list_args(args, offline_mode=False)
 
 
+class TestLogJsonAddressFields:
+    def test_log_json_includes_from_and_journal_used(self):
+        import json
+        from unittest.mock import Mock
+
+        from smtpbench.cli import log_json
+
+        logger = Mock()
+        log_json(
+            logger,
+            "success",
+            1,
+            1,
+            0.5,
+            from_used="s@x.com",
+            journal_used="j@x.com",
+        )
+        entry = json.loads(logger.info.call_args[0][0])
+        assert entry["from_used"] == "s@x.com"
+        assert entry["journal_used"] == "j@x.com"
+
+    def test_log_json_address_fields_default_none(self):
+        import json
+        from unittest.mock import Mock
+
+        from smtpbench.cli import log_json
+
+        logger = Mock()
+        log_json(logger, "success", 1, 1, 0.5)
+        entry = json.loads(logger.info.call_args[0][0])
+        assert entry["from_used"] is None
+        assert entry["journal_used"] is None
+
+
+class TestAddressSelectionInSend:
+    def test_effective_addresses_come_from_lists_offline(self, tmp_path):
+        """In offline mode, send_email writes an EML whose From/To reflect the
+        per-message picks from the address lists."""
+        import email
+
+        from smtpbench import cli
+        from smtpbench.cli import AddressList
+
+        cli.offline_mode = True
+        cli.eml_out_dir = str(tmp_path)
+        cli.recipient_list = AddressList(["to@x.com"], "roundrobin")
+        cli.from_list = AddressList(["sender@x.com"], "roundrobin")
+
+        from unittest.mock import Mock
+
+        loggers = {"success": Mock(), "fail": Mock(), "retry": Mock(), "debug": Mock()}
+        progress = Mock()
+
+        cli.send_email(
+            port=587,
+            recipient="fallback@x.com",
+            from_address="fallback-from@x.com",
+            thread_id=1,
+            message_id=1,
+            retry_delay=0,
+            loggers=loggers,
+            tls_mode="none",
+            transaction_timeout=5,
+            max_retries=0,
+            progress_bar=progress,
+        )
+
+        eml_files = list(tmp_path.glob("*.eml"))
+        assert len(eml_files) == 1
+        msg = email.message_from_bytes(eml_files[0].read_bytes())
+        assert msg["To"] == "to@x.com"
+        assert msg["From"] == "sender@x.com"
+
+    def test_random_mode_selection_is_reproducible_across_runs(self, tmp_path):
+        """Spec: with all three fields in random mode, a fixed run_uuid +
+        thread/message yields the same three picks. This locks the RNG draw
+        order (attachments -> body -> recipient -> from -> journal) so adding
+        the address draws never perturbs reproducibility."""
+        import email
+        from unittest.mock import Mock
+
+        from smtpbench import cli
+        from smtpbench.cli import AddressList
+
+        def run_once(out_dir):
+            cli.offline_mode = True
+            cli.eml_out_dir = str(out_dir)
+            cli.run_uuid = "fixed-run-uuid"
+            cli.journal_enabled = True
+            cli.recipient_list = AddressList(["r1@x.com", "r2@x.com", "r3@x.com"], "random")
+            cli.from_list = AddressList(["f1@x.com", "f2@x.com"], "random")
+            cli.journal_list = AddressList(["j1@x.com", "j2@x.com"], "random")
+            loggers = {k: Mock() for k in ("success", "fail", "retry", "debug")}
+            cli.send_email(
+                port=587,
+                recipient="fallback@x.com",
+                from_address="fallback-from@x.com",
+                thread_id=3,
+                message_id=7,
+                retry_delay=0,
+                loggers=loggers,
+                tls_mode="none",
+                transaction_timeout=5,
+                max_retries=0,
+                progress_bar=Mock(),
+            )
+            eml = list(out_dir.glob("*.eml"))[0]
+            m = email.message_from_bytes(eml.read_bytes())
+            return (m["To"], m["From"])
+
+        a = tmp_path / "a"
+        b = tmp_path / "b"
+        a.mkdir()
+        b.mkdir()
+        assert run_once(a) == run_once(b)
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
