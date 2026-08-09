@@ -1155,5 +1155,14 @@ class TestBuildAddressList:
             )
 
 
+class TestAddressListGlobals:
+    def test_globals_default_none(self):
+        from smtpbench import cli
+
+        assert cli.recipient_list is None
+        assert cli.from_list is None
+        assert cli.journal_list is None
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
