@@ -968,7 +968,7 @@ git commit -m "feat: address_lists summary block + startup INFO lines"
 
 In the help string in `cli.py` (the `PARAMETERS`/options section around lines 86-155, near the `recipient`/`from_address`/`journal_address` entries), add six lines mirroring the existing `{Fore.YELLOW}key{Style.RESET_ALL}=...` format:
 
-```
+```text
     {Fore.YELLOW}recipient_file{Style.RESET_ALL}=PATH     File of recipient addresses (needs lb_host= or eml_out_dir=)
     {Fore.YELLOW}from_file{Style.RESET_ALL}=PATH          File of From addresses
     {Fore.YELLOW}journal_file{Style.RESET_ALL}=PATH       File of journal addresses (needs journal=true)
@@ -983,7 +983,7 @@ Place them near the related single-value keys. Match the existing column alignme
 
 In `cli.py:1287-1295`, append to the bracketed options (before the closing `"`):
 
-```
+```text
             "[recipient_file=<path>] [from_file=<path>] [journal_file=<path>] "
             "[recipient_file_order=random|roundrobin] "
             "[from_file_order=random|roundrobin] [journal_file_order=random|roundrobin]"

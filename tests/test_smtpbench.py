@@ -1235,6 +1235,36 @@ class TestAddressListValidation:
         with pytest.raises(ValueError, match="from_file_order"):
             validate_address_list_args(args, offline_mode=False)
 
+    def test_journal_true_with_recipient_file_and_no_journal_dest_raises(self, tmp_path):
+        """recipient_file + journal=true with no journal_file/journal_address has
+        no single recipient to fall back to; validation must fail fast rather
+        than silently journal nowhere."""
+        from smtpbench.cli import validate_address_list_args
+
+        args = {
+            "recipient_file": self._mk(tmp_path),
+            "lb_host": "relay",
+            "journal": "true",
+        }
+        with pytest.raises(ValueError, match="journal_address="):
+            validate_address_list_args(args, offline_mode=False)
+
+    def test_journal_true_with_recipient_and_no_journal_dest_ok(self, tmp_path):
+        """A single recipient= supplies the journal fallback, so journal=true
+        without an explicit journal destination is allowed."""
+        from smtpbench.cli import validate_address_list_args
+
+        args = {"recipient": "x@y.com", "journal": "true"}
+        validate_address_list_args(args, offline_mode=False)  # no raise
+
+    def test_empty_recipient_file_value_raises(self, tmp_path):
+        """A present-but-empty recipient_file= is a config error, not an absent
+        key: build_address_list must reject it rather than return None."""
+        from smtpbench.cli import build_address_list
+
+        with pytest.raises(ValueError, match="empty value"):
+            build_address_list({"recipient_file": "   "}, "recipient")
+
 
 class TestLogJsonAddressFields:
     def test_log_json_includes_from_and_journal_used(self):

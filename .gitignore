@@ -16,8 +16,9 @@ htmlcov/
 # macOS system files
 .DS_Store
 
-# Log directory
+# Log directory (runtime writes success/fail/retry/debug logs and summary_*.json here)
 log/
+logs/
 
 # Additional pytest related
 .pytest_cache/

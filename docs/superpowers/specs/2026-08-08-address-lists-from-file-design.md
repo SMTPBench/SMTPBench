@@ -158,7 +158,7 @@ introduced — each cursor lives inside its `AddressList` instance.
 Selection is consumed in `send_email()`, at the point where the seeded
 per-message RNG already exists (today it seeds attachment and body selection):
 
-```
+```text
 send_email(port, recipient, from_address, ...):
   rng = random.Random(f"{run_uuid}:{thread_id}:{message_id}")   # existing
   attachment_configs = attachment_plan.select_for_message(rng) if attachment_plan else []
@@ -257,7 +257,7 @@ validation. Messages use the existing `Fore.RED ✗ …{Style.RESET_ALL}` style.
 
 Example:
 
-```
+```text
 # Primary recipients
 alice@example.com
 bob@example.com

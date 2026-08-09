@@ -434,12 +434,17 @@ def test_smtpbench_address_list_rotation(docker_compose_setup, tmp_path):
         seen_recipients.add(to_addr or to_header)
 
     assert matched >= 12, f"Expected ≥12 messages for run {run_uuid}, found {matched}"
-    assert len(seen_froms) > 1, (
-        f"Expected >1 distinct From address (from_file rotation), got {seen_froms!r}"
+    # Compare the observed address sets directly against what was configured:
+    # every sender/recipient must have been used, and no unexpected address
+    # may appear. This is stronger than a cardinality check — it rejects both
+    # under-coverage and stray addresses.
+    assert seen_froms == set(senders), (
+        f"From addresses must match the configured senders exactly "
+        f"(from_file rotation); expected {set(senders)!r}, got {seen_froms!r}"
     )
-    assert len(seen_recipients) == len(recipients), (
-        f"Expected all {len(recipients)} recipient addresses to appear "
-        f"(roundrobin coverage), got {seen_recipients!r}"
+    assert seen_recipients == set(recipients), (
+        f"Recipient addresses must match the configured recipients exactly "
+        f"(roundrobin coverage); expected {set(recipients)!r}, got {seen_recipients!r}"
     )
 
 

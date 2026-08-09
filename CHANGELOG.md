@@ -24,6 +24,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Credentials fail fast**: passing only one of `username=`/`password=` (or `SMTPBENCH_USER`/`SMTPBENCH_PASS`) now aborts with a clear error instead of failing opaquely inside `smtplib.login` on every send.
 - **`attachment_filename` + `attachment_dir` rejected**: the combination was silently ignored (corpus files keep their own names); it now raises a configuration error.
 - **Summary totals derive from per-MX final outcomes**: `totals.sent`/`totals.failed` and `success_rate` now reflect per-message final outcomes (consistent with `per_mx`) instead of counting each retried attempt as a separate failure. `totals.retried` still reports the attempt-level retry count.
+- **Journal destination fails fast**: `journal=true` with `recipient_file=` (no single `recipient=` to fall back to) and no `journal_address=`/`journal_file=` now aborts at startup instead of silently journaling nowhere. A present-but-empty `*_file=` value is likewise rejected as a configuration error rather than treated as absent.
 
 ### Security
 - **Credentials no longer leak under `debug=true`**: `smtplib`'s wire debug is disabled for the duration of `server.login()`, so the (base64, reversible) SASL AUTH exchange is never written to the terminal. The design doc's prior claim that base64 SASL is "obscured" was incorrect and has been corrected.

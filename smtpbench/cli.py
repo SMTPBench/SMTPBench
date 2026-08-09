@@ -715,10 +715,14 @@ ADDRESS_FILE_ORDERS = ("random", "roundrobin")
 def build_address_list(args, field):
     """Build an AddressList for one field ('recipient'|'from'|'journal') from
     '<field>_file' and '<field>_file_order' (default 'random'), or None if the
-    '<field>_file' key is absent."""
-    path = args.get(f"{field}_file")
-    if not path:
+    '<field>_file' key is absent. A key present with an empty value is a
+    configuration error, not an absent key: raise ValueError."""
+    file_key = f"{field}_file"
+    if file_key not in args:
         return None
+    path = args[file_key].strip()
+    if not path:
+        raise ValueError(f"{file_key} was given an empty value; provide a file path.")
     order = args.get(f"{field}_file_order", "random")
     if order not in ADDRESS_FILE_ORDERS:
         raise ValueError(
@@ -752,6 +756,20 @@ def validate_address_list_args(args, offline_mode):
 
     if "journal_file" in args and args.get("journal", "false").lower() != "true":
         raise ValueError("journal_file requires journal=true.")
+
+    # Journaling needs a destination. When recipient_file= is used there is no
+    # single recipient= to fall back to, so journal=true without journal_file=
+    # or journal_address= would silently journal nowhere. Fail fast instead.
+    if (
+        args.get("journal", "false").lower() == "true"
+        and "journal_file" not in args
+        and "journal_address" not in args
+        and "recipient" not in args
+    ):
+        raise ValueError(
+            "journal=true with recipient_file= requires journal_address= or "
+            "journal_file= (no single recipient to journal to)."
+        )
 
     for field in ("recipient", "from", "journal"):
         if f"{field}_file_order" in args and f"{field}_file" not in args:
