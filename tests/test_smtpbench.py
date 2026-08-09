@@ -1353,5 +1353,24 @@ class TestAddressSelectionInSend:
         assert run_once(a) == run_once(b)
 
 
+class TestSummaryAddressLists:
+    def test_address_lists_summary_reports_metadata_only(self):
+        from smtpbench import cli
+        from smtpbench.cli import AddressList, address_lists_summary
+
+        cli.recipient_list = AddressList(["a@x.com", "b@x.com"], "roundrobin")
+        cli.recipient_list.source = "recipients.txt"
+        cli.from_list = AddressList(["s@x.com"], "random")
+        cli.from_list.source = "senders.txt"
+        cli.journal_list = None
+
+        summary = address_lists_summary()
+        assert summary["recipient"] == {"file": "recipients.txt", "count": 2, "order": "roundrobin"}
+        assert summary["from"] == {"file": "senders.txt", "count": 1, "order": "random"}
+        assert summary["journal"] is None
+        # No raw addresses leaked.
+        assert "a@x.com" not in json.dumps(summary)
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

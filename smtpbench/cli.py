@@ -363,6 +363,21 @@ def write_summary(config, elapsed_seconds):
     return path
 
 
+def address_lists_summary():
+    """Metadata-only summary of active address lists (never the addresses)."""
+
+    def _entry(plan):
+        if plan is None:
+            return None
+        return {"file": plan.source, "count": len(plan.addresses), "order": plan.order}
+
+    return {
+        "recipient": _entry(recipient_list),
+        "from": _entry(from_list),
+        "journal": _entry(journal_list),
+    }
+
+
 def parse_size(size_value):
     """Parse attachment sizes like 1024, 2KB, or 5MB into bytes."""
     value = str(size_value).strip().upper()
@@ -644,9 +659,10 @@ class AddressList:
                         address fields' round-robin counters stay independent.
     """
 
-    def __init__(self, addresses, order):
+    def __init__(self, addresses, order, source=None):
         self.addresses = addresses  # non-empty list[str]
         self.order = order  # "random" | "roundrobin"
+        self.source = source  # file path that produced this list, or None
         self._idx = 0
         self._lock = threading.Lock()
 
@@ -703,7 +719,7 @@ def build_address_list(args, field):
             f"Invalid {field}_file_order '{order}'; valid values: {', '.join(ADDRESS_FILE_ORDERS)}"
         )
     addresses = parse_address_file(path, field)
-    return AddressList(addresses, order)
+    return AddressList(addresses, order, source=path)
 
 
 def validate_address_list_args(args, offline_mode):
@@ -1340,6 +1356,17 @@ def main():
     print(f"[INFO] Logs will be saved in: {os.path.abspath(log_dir)}")
     if journal_enabled:
         print(f"[INFO] Journal mode enabled. Journal address: {journal_address}")
+    for label, plan in (
+        ("Recipient", recipient_list),
+        ("From", from_list),
+        ("Journal", journal_list),
+    ):
+        if plan is not None:
+            order_label = "round-robin" if plan.order == "roundrobin" else "random"
+            print(
+                f"[INFO] {label} list: {plan.source} "
+                f"({len(plan.addresses)} addresses, {order_label})"
+            )
     if debug_enabled:
         print(
             f"[INFO] Debug mode enabled. Debug log: {os.path.join(log_dir, f'debug_{run_timestamp}_{run_uuid}.log')}"
@@ -1415,6 +1442,7 @@ def main():
         "port": port,
         "offline": offline_mode,
         "body_text_dir": body_plan is not None,
+        "address_lists": address_lists_summary(),
     }
     summary_path = write_summary(summary_config, elapsed)
     print(f"Summary written to: {summary_path}")
