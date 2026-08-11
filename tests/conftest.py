@@ -12,7 +12,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 @pytest.fixture(autouse=True)
 def reset_globals():
     """Reset the mutable CLI counters and run state (success/fail/retry counts,
-    stop flag, and mx_hosts) before and after each test."""
+    stop flag, mx_hosts, and debug state) before and after each test."""
     from smtpbench import cli
 
     # Reset global counters
@@ -33,6 +33,10 @@ def reset_globals():
     cli.rate_limiter = None
     cli.latency_samples = []
     cli.per_mx_stats = {}
+    # Debug state gates the `if debug_enabled:` branches in the send path and
+    # banner check. Tests that turn it on must not leak it into later tests.
+    cli.debug_enabled = False
+    cli.debug_logger = None
 
     yield
 
@@ -54,6 +58,10 @@ def reset_globals():
     cli.rate_limiter = None
     cli.latency_samples = []
     cli.per_mx_stats = {}
+    # Debug state gates the `if debug_enabled:` branches in the send path and
+    # banner check. Tests that turn it on must not leak it into later tests.
+    cli.debug_enabled = False
+    cli.debug_logger = None
 
 
 @pytest.fixture
