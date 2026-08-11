@@ -1517,7 +1517,10 @@ class TestMXFailover:
         assert host == "mx2.example.com"
         assert error is None
         logged = " ".join(str(c) for c in cli.debug_logger.debug.call_args_list)
-        assert "mx1.example.com" in logged  # the failed host is named
+        # Match the failure line itself, not just the host name: the host also
+        # appears in the "Attempting connection to" trace, so a bare host match
+        # would pass even if the error were never recorded.
+        assert "Error sending to mx1.example.com" in logged
         assert "Starting TLS" in logged  # and the retry's TLS upgrade is traced
         good_server.set_debuglevel.assert_called_with(1)
 
