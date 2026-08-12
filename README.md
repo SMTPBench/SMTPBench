@@ -25,23 +25,29 @@ A robust SMTP load testing and benchmarking tool with MX failover support and de
 
 ## Features
 
-- 🚀 **Multi-threaded Load Testing** - Simulate concurrent SMTP connections
-- 🔄 **MX Failover** - Automatic MX record lookup with failover to backup servers
+- 🚀 **Multi-threaded Load Testing** - Simulate concurrent SMTP connections; `threads=` workers × `messages=` each, or `messages=0` to run until interrupted
+- 🔄 **MX Failover** - Automatic MX record lookup, tried in priority order with failover to backup servers — or skip DNS entirely with `lb_host=`
+- ✅ **Pre-flight Banner Check** - Verifies the first host answers before sending anything, so an unreachable server fails fast instead of after N threads of errors
+- ♻️ **Retry with Backoff** - `max_retries=` attempts spaced by `retry_delay=`, counted and reported separately from final per-message outcomes
+- ⏱️ **Timeout and Pacing Control** - `transaction_timeout=` per SMTP transaction, plus a fixed `delay=` or `random_delay=` between messages
 - 🎚️ **Whole-run Rate Cap** - `rate=` messages/sec enforced by a token bucket shared across all threads
 - 📊 **Real-time Progress** - Live progress bar with success rate metrics
+- 🎨 **Color-coded Output** - Success rate colored by threshold: green ≥90%, yellow 70–89%, red <70%
 - 📈 **Summary Artifact** - Machine-readable `summary_*.json` per run with totals, latency percentiles, and per-MX counts
-- 📝 **Detailed Logging** - Structured JSON logs for success, failures, retries, and debug info
+- 📝 **Detailed Logging** - Structured JSON logs for success, failures, retries, and debug info, written to `logfile_output=` (default `./logs`)
+- 🏷️ **Traceable Messages** - Every message carries `X-SMTPBench-Run-UUID`, `X-SMTPBench-Thread-ID`, and `X-SMTPBench-Message-ID` headers, so delivered mail can be tied back to the exact run and worker that sent it
 - 🔒 **TLS Transport Modes** - `starttls`, implicit `ssl` (port 465), or `none`
-- 🔑 **SMTP AUTH** - Credentials from CLI, environment, or a `.env` file; never written to logs or the summary
-- 📎 **Attachments** - A static file, synthetic payloads of a fixed size or range, or random sampling from a corpus directory
+- 🔑 **SMTP AUTH** - Credentials from CLI, environment, or an auto-discovered `.env` file (`dotenv_path=` to override); never written to logs or the summary
+- 🖥️ **Custom HELO/EHLO** - Announce any hostname with `client_hostname=` instead of the system default
+- 📎 **Attachments** - A static file, synthetic payloads of a fixed size or range, or random sampling from a corpus directory — with the estimated total payload printed before sending
 - 📄 **Body-text Corpus** - Prefix each message with a randomly selected text file for realistic content
 - 📇 **Address Lists** - Draw recipient / from / journal addresses from files, randomly or round-robin
-- 💾 **Offline EML Mode** - Compose to `.eml` files on disk instead of sending, for message-format work without a mail server
-- ⚙️ **Highly Configurable** - Extensive options for timeouts, retries, and delays
-- 🎨 **Color-coded Output** - Success rate colored by threshold: green ≥90%, yellow 70–89%, red <70%
-- 📬 **Journal Mode** - Optional message journaling mode
-- 🐛 **Debug Mode** - Detailed debugging for troubleshooting
+- 💾 **Offline EML Mode** - Compose to `.eml` files on disk instead of sending, for message-format work without a mail server; content-addressed `{sha256}.eml` names mean identical messages deduplicate to one file
+- 📬 **Journal Mode** - `journal=true` adds a second envelope recipient (`journal_address=`, defaulting to the recipient) to exercise compliance-journaling paths — a bcc-style copy, so it never appears in the message headers
+- 🐛 **Debug Mode** - Detailed debugging for troubleshooting, including the SMTP wire conversation — muted around the AUTH exchange so the SASL handshake never reaches your terminal
 - 🐳 **Docker Support** - Run in containers
+
+Every option behind these is listed in [Configuration Options](#configuration-options).
 
 ## Installation
 
@@ -312,6 +318,8 @@ smtpbench \
 - `attachment_size=` also accepts a range, e.g. `10KB-2MB`, to generate variable-sized synthetic attachments
 
 Per-message selection is seeded from the run UUID so results are reproducible.
+
+> **Note:** `attachment_filename=` cannot be combined with `attachment_dir=`. Corpus files keep their own names — renaming every sampled file to one fixed name would defeat the point of sampling a corpus — so SMTPBench rejects the combination rather than silently ignoring one of the two.
 
 ### Body-text Prefix
 
