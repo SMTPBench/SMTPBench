@@ -32,7 +32,7 @@ A robust SMTP load testing and benchmarking tool with MX failover support and de
 - ⏱️ **Timeout and Pacing Control** - `transaction_timeout=` per SMTP transaction, plus a fixed `delay=` or `random_delay=` between messages
 - 🎚️ **Whole-run Rate Cap** - `rate=` messages/sec enforced by a token bucket shared across all threads
 - 📊 **Real-time Progress** - Live progress bar with success rate metrics
-- 🎨 **Color-coded Output** - Success rate colored by threshold: green ≥90%, yellow 70–89%, red <70%
+- 🎨 **Color-coded Output** - Success rate colored by threshold: green at ≥90%, yellow at ≥70% and <90%, red below 70%
 - 📈 **Summary Artifact** - Machine-readable `summary_*.json` per run with totals, latency percentiles, and per-MX counts
 - 📝 **Detailed Logging** - Structured JSON logs for success, failures, retries, and debug info, written to `logfile_output=` (default `./logs`)
 - 🏷️ **Traceable Messages** - Every message carries `X-SMTPBench-Run-UUID`, `X-SMTPBench-Thread-ID`, and `X-SMTPBench-Message-ID` headers, so delivered mail can be tied back to the exact run and worker that sent it
@@ -186,10 +186,12 @@ python -m smtpbench recipient=test@local.lets.qa port=587 threads=5 messages=10
 
 ## Configuration Options
 
-The tables below are the complete reference — every option SMTPBench accepts appears in one of them. For the same list formatted for the terminal, with worked examples, run:
+The tables below are the complete reference — every option SMTPBench accepts appears in one of them. For terminal-formatted usage with worked examples, run:
 ```bash
 smtpbench --help
 ```
+
+> **Note:** `--help` is a quick reference, not an exhaustive one — it currently omits `attachment_dir=` and `attachment_probability=`. These tables are authoritative.
 
 ### Required Parameters
 
@@ -209,7 +211,7 @@ smtpbench --help
 | `lb_host` | *(auto MX lookup)* | Load balancer/SMTP host (skips MX lookup) |
 | `from_address` | `no-reply@localhost` | Sender email address |
 | `retry_delay` | `20` | Seconds to wait between retries |
-| `use_tls` | `true` | **Deprecated** — alias for `tls_mode=starttls` / `tls_mode=none`. Use `tls_mode` instead. |
+| `use_tls` | *(unset)* | **Deprecated** — alias for `tls_mode`: `true`→`starttls`, `false`→`none`. Prints a deprecation warning. Beware that `use_tls=true` forces `starttls` even on port 465, where leaving it unset selects `ssl` — so it is not a no-op. Use `tls_mode` instead. |
 | `delay` | `0` | Fixed delay between messages (seconds) |
 | `random_delay` | `false` | Random 1-15 second delay between messages |
 | `transaction_timeout` | `20` | SMTP transaction timeout (seconds) |
@@ -286,7 +288,7 @@ smtpbench recipient=test@example.com port=465 threads=5 messages=10 tls_mode=ssl
 smtpbench recipient=test@example.com port=25 threads=5 messages=10 tls_mode=none
 ```
 
-The `use_tls=true/false` flag is a deprecated alias for `tls_mode=starttls/none`.
+The `use_tls=true/false` flag is a deprecated alias for `tls_mode=starttls/none`. It is not equivalent to omitting TLS options: `use_tls=true` resolves to `starttls` unconditionally, so on port 465 it overrides the implicit-`ssl` default. Setting both `tls_mode` and `use_tls` is allowed — `tls_mode` wins and a warning is printed.
 
 ### Rate Limiting
 
@@ -592,7 +594,7 @@ X-SMTPBench-Run-UUID: f9e8d7c6-b5a4-3210-fedc-ba9876543210  ← Different run
 
 ### Terminal Output
 
-SMTPBench displays real-time progress with a success rate colored by threshold — **green at ≥90%, yellow at 70–89%, red below 70%** — so a degrading run is visible without reading the numbers:
+SMTPBench displays real-time progress with a success rate colored by threshold — **green at ≥90%, yellow at ≥70% and <90%, red below 70%** — so a degrading run is visible without reading the numbers:
 
 ```
 [INFO] Run UUID: a1b2c3d4-e5f6-7890-abcd-ef1234567890
