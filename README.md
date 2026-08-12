@@ -38,7 +38,7 @@ A robust SMTP load testing and benchmarking tool with MX failover support and de
 - 📇 **Address Lists** - Draw recipient / from / journal addresses from files, randomly or round-robin
 - 💾 **Offline EML Mode** - Compose to `.eml` files on disk instead of sending, for message-format work without a mail server
 - ⚙️ **Highly Configurable** - Extensive options for timeouts, retries, and delays
-- 🎨 **Color-coded Output** - Easy-to-read terminal output with status colors
+- 🎨 **Color-coded Output** - Success rate colored by threshold: green ≥90%, yellow 70–89%, red <70%
 - 📬 **Journal Mode** - Optional message journaling mode
 - 🐛 **Debug Mode** - Detailed debugging for troubleshooting
 - 🐳 **Docker Support** - Run in containers
@@ -180,7 +180,7 @@ python -m smtpbench recipient=test@local.lets.qa port=587 threads=5 messages=10
 
 ## Configuration Options
 
-For a complete, formatted list of all options with examples, run:
+The tables below are the complete reference — every option SMTPBench accepts appears in one of them. For the same list formatted for the terminal, with worked examples, run:
 ```bash
 smtpbench --help
 ```
@@ -189,7 +189,7 @@ smtpbench --help
 
 | Parameter | Description | Example |
 |-----------|-------------|---------|
-| `recipient` | Target email address | `test@local.lets.qa` |
+| `recipient` | Target email address — or supply `recipient_file=` instead (see [Address Lists from a File](#address-lists-from-a-file)) | `test@local.lets.qa` |
 | `port` | SMTP port number | `587` or `25` |
 | `threads` | Number of concurrent threads | `10` |
 | `messages` | Messages per thread (0 for infinite) | `100` |
@@ -212,6 +212,12 @@ smtpbench --help
 | `logfile_output` | `./logs` | Directory for log files |
 | `journal` | `false` | Enable journal mode |
 | `journal_address` | *(same as recipient)* | Email address for journal copies |
+| `recipient_file` | *(none)* | File of recipient addresses, one per line. Requires `lb_host=` or `eml_out_dir=`. See [Address Lists from a File](#address-lists-from-a-file) |
+| `from_file` | *(none)* | File of From addresses. See [Address Lists from a File](#address-lists-from-a-file) |
+| `journal_file` | *(none)* | File of journal addresses. Requires `journal=true`. See [Address Lists from a File](#address-lists-from-a-file) |
+| `recipient_file_order` | `random` | Selection order for `recipient_file`: `random` or `roundrobin` |
+| `from_file_order` | `random` | Selection order for `from_file`: `random` or `roundrobin` |
+| `journal_file_order` | `random` | Selection order for `journal_file`: `random` or `roundrobin` |
 | `debug` | `false` | Enable debug logging |
 | `attachment_path` | *(none)* | Attach a specific file to every message |
 | `attachment_size` | *(none)* | Generate synthetic attachment(s); accepts a fixed size or range (`512KB`, `10KB-2MB`) |
@@ -361,6 +367,7 @@ Supply a plain-text file of addresses for `recipient`, `from_address`, or `journ
 - A `*_file` key **overrides** and **cannot be combined with** its single-value sibling (`recipient`, `from_address`, or `journal_address`).
 - `recipient_file` requires `lb_host=` (a fixed relay) or `eml_out_dir=` (offline mode). MX-based delivery with a multi-domain recipient file is not supported; all recipients are delivered through the one relay.
 - `journal_file` requires `journal=true`.
+- A `*_file_order` key requires its matching `*_file` key. Ordering an address list you never supplied is a mistake rather than a no-op, so SMTPBench rejects it.
 - `journal=true` combined with `recipient_file=` requires an explicit `journal_address=` or `journal_file=`. Journaling normally falls back to the single `recipient`, and there isn't one in that combination, so SMTPBench fails fast rather than journaling nowhere.
 
 **File format:**
@@ -577,7 +584,7 @@ X-SMTPBench-Run-UUID: f9e8d7c6-b5a4-3210-fedc-ba9876543210  ← Different run
 
 ### Terminal Output
 
-SMTPBench displays real-time progress with color-coded success rates:
+SMTPBench displays real-time progress with a success rate colored by threshold — **green at ≥90%, yellow at 70–89%, red below 70%** — so a degrading run is visible without reading the numbers:
 
 ```
 [INFO] Run UUID: a1b2c3d4-e5f6-7890-abcd-ef1234567890
