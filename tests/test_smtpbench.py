@@ -1,18 +1,26 @@
 """Unit tests for SMTPBench"""
 
 import json
+import logging
 import random
+import smtplib
 import sys
-from unittest.mock import Mock, patch
+from contextlib import ExitStack
+from unittest.mock import MagicMock, Mock, call, patch
 
 import pytest
 
+from smtpbench import cli
 from smtpbench.cli import (
+    check_smtp_banner,
     color_rate,
     create_message,
     log_json,
+    main,
     mx_lookup_all,
     parse_args,
+    send_email,
+    try_send_to_mx_hosts,
 )
 
 
@@ -1400,6 +1408,628 @@ class TestSummaryAddressLists:
         assert summary["journal"] is None
         # No raw addresses leaked.
         assert "a@x.com" not in json.dumps(summary)
+
+
+def _fake_smtp(server=None):
+    """Return (connection, server) mocks shaped like `smtplib.SMTP(...)`.
+
+    The send path and banner check both use the connection as a context
+    manager, so whatever the constructor returns must yield the server from
+    __enter__ and must not suppress exceptions on __exit__.
+    """
+    server = MagicMock() if server is None else server
+    connection = MagicMock()
+    connection.__enter__.return_value = server
+    connection.__exit__.return_value = False
+    return connection, server
+
+
+class TestMXFailover:
+    """try_send_to_mx_hosts walks mx_hosts in priority order until one works."""
+
+    def _send(self, tls_mode="none", port=587):
+        msg = create_message("to@example.com", "from@example.com", 1, 1, [])
+        return try_send_to_mx_hosts("from@example.com", ["to@example.com"], msg, port, tls_mode, 20)
+
+    def test_falls_over_to_second_host_when_connect_fails(self):
+        cli.mx_hosts = ["mx1.example.com", "mx2.example.com"]
+        good_conn, good_server = _fake_smtp()
+        with patch(
+            "smtplib.SMTP", side_effect=[ConnectionRefusedError("mx1 down"), good_conn]
+        ) as ctor:
+            host, error = self._send()
+
+        assert host == "mx2.example.com"
+        assert error is None
+        assert ctor.call_count == 2
+        good_server.sendmail.assert_called_once()
+
+    def test_falls_over_when_sendmail_fails_mid_transaction(self):
+        """A failure inside the SMTP transaction must fail over, not just a
+        failure to connect."""
+        cli.mx_hosts = ["mx1.example.com", "mx2.example.com"]
+        bad_conn, bad_server = _fake_smtp()
+        bad_server.sendmail.side_effect = smtplib.SMTPDataError(451, b"try again later")
+        good_conn, good_server = _fake_smtp()
+        with patch("smtplib.SMTP", side_effect=[bad_conn, good_conn]):
+            host, error = self._send()
+
+        assert host == "mx2.example.com"
+        assert error is None
+        bad_server.sendmail.assert_called_once()
+        good_server.sendmail.assert_called_once()
+
+    def test_stops_at_first_success_without_trying_later_hosts(self):
+        cli.mx_hosts = ["mx1.example.com", "mx2.example.com", "mx3.example.com"]
+        good_conn, good_server = _fake_smtp()
+        with patch("smtplib.SMTP", side_effect=[good_conn]) as ctor:
+            host, error = self._send()
+
+        assert host == "mx1.example.com"
+        assert error is None
+        assert ctor.call_count == 1
+        good_server.sendmail.assert_called_once()
+
+    def test_returns_last_host_and_last_error_when_all_hosts_fail(self):
+        cli.mx_hosts = ["mx1.example.com", "mx2.example.com"]
+        with patch("smtplib.SMTP", side_effect=[OSError("first failed"), OSError("second failed")]):
+            host, error = self._send()
+
+        assert host == "mx2.example.com"
+        assert isinstance(error, OSError)
+        # The LAST error is reported, not the first one seen.
+        assert str(error) == "second failed"
+
+    def test_no_hosts_returns_none_pair_without_connecting(self):
+        cli.mx_hosts = []
+        with patch("smtplib.SMTP") as ctor:
+            host, error = self._send()
+
+        assert (host, error) == (None, None)
+        ctor.assert_not_called()
+
+    def test_ssl_mode_uses_smtp_ssl_and_skips_starttls(self):
+        cli.mx_hosts = ["mx1.example.com"]
+        conn, server = _fake_smtp()
+        # Nested rather than parenthesized: the package floor is Python 3.8.
+        with patch("smtplib.SMTP_SSL", return_value=conn) as ssl_ctor:
+            with patch("smtplib.SMTP") as plain_ctor:
+                host, error = self._send(tls_mode="ssl", port=465)
+
+        assert error is None
+        ssl_ctor.assert_called_once_with("mx1.example.com", 465, timeout=20)
+        plain_ctor.assert_not_called()
+        server.starttls.assert_not_called()
+
+    def test_starttls_mode_upgrades_the_connection(self):
+        cli.mx_hosts = ["mx1.example.com"]
+        conn, server = _fake_smtp()
+        with patch("smtplib.SMTP", return_value=conn):
+            host, error = self._send(tls_mode="starttls")
+
+        assert error is None
+        server.starttls.assert_called_once()
+
+    def test_failover_error_is_recorded_to_debug_log(self):
+        cli.mx_hosts = ["mx1.example.com", "mx2.example.com"]
+        cli.debug_enabled = True
+        cli.debug_logger = MagicMock()
+        good_conn, good_server = _fake_smtp()
+        with patch("smtplib.SMTP", side_effect=[OSError("mx1 down"), good_conn]):
+            host, error = self._send(tls_mode="starttls")
+
+        assert host == "mx2.example.com"
+        assert error is None
+        logged = " ".join(str(c) for c in cli.debug_logger.debug.call_args_list)
+        # Match the failure line itself, not just the host name: the host also
+        # appears in the "Attempting connection to" trace, so a bare host match
+        # would pass even if the error were never recorded.
+        assert "Error sending to mx1.example.com" in logged
+        assert "Starting TLS" in logged  # and the retry's TLS upgrade is traced
+        good_server.set_debuglevel.assert_called_with(1)
+
+
+class TestBannerCheck:
+    """check_smtp_banner is the pre-flight gate: any problem exits 1."""
+
+    def test_passes_on_250_banner(self, capsys):
+        conn, server = _fake_smtp()
+        server.ehlo.return_value = (250, b"mx1 ready")
+        with patch("smtplib.SMTP", return_value=conn):
+            check_smtp_banner("mx1.example.com", 587, "none", 20)
+
+        out = capsys.readouterr().out
+        assert "banner check passed" in out
+        assert "mx1 ready" in out  # bytes banner decoded for display
+        server.starttls.assert_not_called()
+
+    def test_accepts_str_banner(self, capsys):
+        """Banners arrive as bytes from smtplib but str must not crash."""
+        conn, server = _fake_smtp()
+        server.ehlo.return_value = (250, "already a string")
+        with patch("smtplib.SMTP", return_value=conn):
+            check_smtp_banner("mx1.example.com", 587, "none", 20)
+
+        assert "already a string" in capsys.readouterr().out
+
+    def test_exits_when_ehlo_is_not_250(self, capsys):
+        conn, server = _fake_smtp()
+        server.ehlo.return_value = (554, b"no service here")
+        with patch("smtplib.SMTP", return_value=conn):
+            with pytest.raises(SystemExit) as exc:
+                check_smtp_banner("mx1.example.com", 587, "none", 20)
+
+        assert exc.value.code == 1
+        assert "banner check failed" in capsys.readouterr().out
+
+    def test_exits_when_ehlo_after_starttls_is_not_250(self, capsys):
+        conn, server = _fake_smtp()
+        server.ehlo.side_effect = [(250, b"ready"), (500, b"broken after tls")]
+        with patch("smtplib.SMTP", return_value=conn):
+            with pytest.raises(SystemExit) as exc:
+                check_smtp_banner("mx1.example.com", 587, "starttls", 20)
+
+        assert exc.value.code == 1
+        server.starttls.assert_called_once()
+        assert "EHLO after STARTTLS failed" in capsys.readouterr().out
+
+    def test_passes_starttls_when_both_ehlos_are_250(self, capsys):
+        conn, server = _fake_smtp()
+        server.ehlo.side_effect = [(250, b"ready"), (250, b"ready over tls")]
+        with patch("smtplib.SMTP", return_value=conn):
+            check_smtp_banner("mx1.example.com", 587, "starttls", 20)
+
+        server.starttls.assert_called_once()
+        assert "banner check passed" in capsys.readouterr().out
+
+    def test_exits_when_connection_raises(self, capsys):
+        with patch("smtplib.SMTP", side_effect=ConnectionRefusedError("connection refused")):
+            with pytest.raises(SystemExit) as exc:
+                check_smtp_banner("mx1.example.com", 587, "none", 20)
+
+        assert exc.value.code == 1
+        out = capsys.readouterr().out
+        assert "banner check failed" in out
+        assert "connection refused" in out
+
+    def test_ssl_mode_uses_smtp_ssl(self):
+        conn, server = _fake_smtp()
+        server.ehlo.return_value = (250, b"ready")
+        with patch("smtplib.SMTP_SSL", return_value=conn) as ssl_ctor:
+            with patch("smtplib.SMTP") as plain_ctor:
+                check_smtp_banner("mx1.example.com", 465, "ssl", 20)
+
+        ssl_ctor.assert_called_once_with("mx1.example.com", 465, timeout=20)
+        plain_ctor.assert_not_called()
+
+    def test_bad_banner_exit_is_not_swallowed_by_broad_except(self, capsys):
+        """SystemExit must escape the function's `except Exception` handler.
+
+        If it were caught, a bad banner would report failure twice and mask
+        which check actually tripped.
+        """
+        conn, server = _fake_smtp()
+        server.ehlo.return_value = (554, b"no service here")
+        with patch("smtplib.SMTP", return_value=conn):
+            with pytest.raises(SystemExit):
+                check_smtp_banner("mx1.example.com", 587, "none", 20)
+
+        assert capsys.readouterr().out.count("banner check failed") == 1
+
+    def test_debug_logging_when_enabled(self, capsys):
+        cli.debug_enabled = True
+        cli.debug_logger = MagicMock()
+        conn, server = _fake_smtp()
+        server.ehlo.return_value = (250, b"ready")
+        with patch("smtplib.SMTP", return_value=conn):
+            check_smtp_banner("mx1.example.com", 587, "none", 20)
+
+        server.set_debuglevel.assert_called_once_with(1)
+        assert cli.debug_logger.debug.called
+
+    def test_debug_records_reason_for_each_failure_path(self):
+        """Each of the three exit paths writes its reason to the debug log."""
+        cases = [
+            ("none", [(554, b"no service")], "banner check failed"),
+            ("starttls", [(250, b"ready"), (500, b"broken")], "STARTTLS failed"),
+        ]
+        for tls_mode, ehlo_results, expected in cases:
+            cli.debug_enabled = True
+            cli.debug_logger = MagicMock()
+            conn, server = _fake_smtp()
+            server.ehlo.side_effect = ehlo_results
+            with patch("smtplib.SMTP", return_value=conn):
+                with pytest.raises(SystemExit):
+                    check_smtp_banner("mx1.example.com", 587, tls_mode, 20)
+            logged = " ".join(str(c) for c in cli.debug_logger.debug.call_args_list)
+            assert expected in logged, f"{tls_mode}: missing {expected!r} in debug log"
+
+        # And the exception path.
+        cli.debug_enabled = True
+        cli.debug_logger = MagicMock()
+        with patch("smtplib.SMTP", side_effect=ConnectionRefusedError("refused")):
+            with pytest.raises(SystemExit):
+                check_smtp_banner("mx1.example.com", 587, "none", 20)
+        logged = " ".join(str(c) for c in cli.debug_logger.debug.call_args_list)
+        assert "exception" in logged
+
+
+def _logged(logger):
+    """Decode the JSON payloads a mock logger received, in call order."""
+    return [json.loads(record.args[0]) for record in logger.info.call_args_list]
+
+
+class TestSendEmailRetryLoop:
+    """The online branch of send_email — the path real users hit.
+
+    Only the offline/EML branch was covered before. The accounting here is
+    deliberately asymmetric and easy to break: fail_count counts every failed
+    *attempt*, while per_mx_stats records one final outcome per *message*. The
+    summary reads per_mx_stats, so a change that conflated the two would
+    silently inflate the reported failure count.
+    """
+
+    def _send(self, mx_results, max_retries=3, retry_delay=7):
+        """Run one send with try_send_to_mx_hosts stubbed out.
+
+        `mx_results` is the (host, error) sequence the stub hands back, one per
+        attempt. Returns the mock loggers, the stub, and the sleep mock.
+        """
+        loggers = {name: MagicMock() for name in ("success", "fail", "retry")}
+        with ExitStack() as stack:
+            sender = stack.enter_context(
+                patch("smtpbench.cli.try_send_to_mx_hosts", side_effect=mx_results)
+            )
+            sleep = stack.enter_context(patch("time.sleep"))
+            send_email(
+                587,
+                "to@example.com",
+                "from@example.com",
+                1,
+                1,
+                retry_delay,
+                loggers,
+                "none",
+                20,
+                max_retries,
+                MagicMock(),
+            )
+        return loggers, sender, sleep
+
+    def test_first_attempt_success_records_one_send(self):
+        loggers, sender, sleep = self._send([("mx1.example.com", None)])
+
+        assert sender.call_count == 1
+        assert (cli.success_count, cli.fail_count, cli.retry_count) == (1, 0, 0)
+        assert cli.per_mx_stats == {"mx1.example.com": {"sent": 1, "failed": 0}}
+        assert len(cli.latency_samples) == 1
+        assert _logged(loggers["success"])[0]["attempt"] == 1
+        loggers["fail"].info.assert_not_called()
+        loggers["retry"].info.assert_not_called()
+        sleep.assert_not_called()
+
+    def test_retry_then_success_counts_one_message_not_three_attempts(self):
+        error = smtplib.SMTPServerDisconnected("connection dropped")
+        loggers, sender, sleep = self._send(
+            [
+                ("mx1.example.com", error),
+                ("mx1.example.com", error),
+                ("mx1.example.com", None),
+            ]
+        )
+
+        assert sender.call_count == 3
+        # Attempt-level counters see all three attempts...
+        assert (cli.success_count, cli.fail_count, cli.retry_count) == (1, 2, 2)
+        # ...but the summary store records exactly one final outcome.
+        assert cli.per_mx_stats == {"mx1.example.com": {"sent": 1, "failed": 0}}
+        assert [entry["attempt"] for entry in _logged(loggers["fail"])] == [1, 2]
+        assert [entry["retry_number"] for entry in _logged(loggers["retry"])] == [0, 1]
+        assert _logged(loggers["success"])[0]["attempt"] == 3
+        assert sleep.call_args_list == [call(7), call(7)]
+
+    def test_exhausted_retries_record_one_failure_for_the_message(self):
+        error = OSError("connection refused")
+        loggers, sender, sleep = self._send([("mx1.example.com", error)] * 3, max_retries=2)
+
+        assert sender.call_count == 3  # the first attempt plus two retries
+        assert (cli.success_count, cli.fail_count, cli.retry_count) == (0, 3, 2)
+        assert cli.per_mx_stats == {"mx1.example.com": {"sent": 0, "failed": 1}}
+        assert cli.latency_samples == []  # latency is sampled on success only
+        loggers["success"].info.assert_not_called()
+        assert sleep.call_count == 2  # and no sleep after the final attempt
+
+    def test_max_retries_zero_is_a_single_attempt(self):
+        loggers, sender, sleep = self._send(
+            [("mx1.example.com", OSError("refused"))], max_retries=0
+        )
+
+        assert sender.call_count == 1
+        assert (cli.fail_count, cli.retry_count) == (1, 0)
+        assert cli.per_mx_stats == {"mx1.example.com": {"sent": 0, "failed": 1}}
+        loggers["retry"].info.assert_not_called()
+        sleep.assert_not_called()
+
+    def test_stop_requested_abandons_retries_without_a_final_outcome(self):
+        def fail_then_stop(*_args):
+            cli.stop_requested = True
+            return "mx1.example.com", OSError("shutting down")
+
+        loggers, sender, _ = self._send(fail_then_stop)
+
+        assert sender.call_count == 1
+        assert (cli.fail_count, cli.retry_count) == (1, 1)
+        # The stop flag ends the loop before the retry budget runs out, so no
+        # final outcome is recorded: the message is abandoned, not failed.
+        assert cli.per_mx_stats == {}
+
+    def test_the_host_that_answered_is_the_one_credited(self):
+        """The failover result decides the bucket, not the first host tried."""
+        loggers, _, _ = self._send([("mx2.example.com", None)])
+
+        assert cli.per_mx_stats == {"mx2.example.com": {"sent": 1, "failed": 0}}
+        assert _logged(loggers["success"])[0]["mx_host_used"] == "mx2.example.com"
+
+    def test_journal_address_is_added_to_the_envelope_recipients(self):
+        cli.journal_enabled = True
+        cli.journal_address = "journal@example.com"
+
+        loggers, _, _ = self._send([("mx1.example.com", None)])
+
+        entry = _logged(loggers["success"])[0]
+        assert entry["recipients"] == ["to@example.com", "journal@example.com"]
+        assert entry["journal_used"] == "journal@example.com"
+
+
+def _run_main(argv):
+    """Invoke main() with a synthetic argv (the program name is supplied)."""
+    with ExitStack() as stack:
+        stack.enter_context(patch.object(sys, "argv", ["smtpbench", *argv]))
+        # main() installs a SIGINT handler; leave pytest's own handler alone.
+        stack.enter_context(patch("smtpbench.cli.signal.signal"))
+        main()
+
+
+def _summary(log_dir):
+    """Read back the single summary JSON main() wrote into log_dir."""
+    paths = sorted(log_dir.glob("summary_*.json"))
+    assert len(paths) == 1, f"expected one summary, found {paths}"
+    return json.loads(paths[0].read_text())
+
+
+class TestMainOffline:
+    """main() end to end with no network: the offline/EML branch."""
+
+    def test_offline_run_writes_eml_and_a_consistent_summary(self, tmp_path, capsys):
+        eml_dir = tmp_path / "eml"
+        log_dir = tmp_path / "logs"
+
+        _run_main(
+            [
+                "recipient=to@example.com",
+                "port=587",
+                "threads=2",
+                "messages=3",
+                f"eml_out_dir={eml_dir}",
+                f"logfile_output={log_dir}",
+            ]
+        )
+
+        stdout = capsys.readouterr().out
+        assert "Offline mode" in stdout
+        assert "banner check" not in stdout  # offline skips the pre-flight entirely
+        assert cli.mx_hosts == []
+        assert len(list(eml_dir.glob("*.eml"))) == 6  # 2 threads x 3 messages
+
+        summary = _summary(log_dir)
+        assert summary["totals"]["sent"] == 6
+        assert summary["totals"]["failed"] == 0
+        assert summary["totals"]["success_rate"] == 100.0
+        assert summary["per_mx"] == {"file": {"sent": 6, "failed": 0}}
+        assert summary["config"]["offline"] is True
+        assert summary["config"]["threads"] == 2
+        assert summary["config"]["messages"] == 3
+        assert summary["config"]["rate"] is None
+        assert summary["config"]["auth"] is False
+        assert "Total Sent: 6" in stdout
+
+    def test_recipient_file_satisfies_the_recipient_requirement(self, tmp_path):
+        address_file = tmp_path / "recipients.txt"
+        address_file.write_text("first@example.com\nsecond@example.com\n")
+        log_dir = tmp_path / "logs"
+
+        _run_main(
+            [
+                f"recipient_file={address_file}",
+                "port=587",
+                "threads=1",
+                "messages=2",
+                f"eml_out_dir={tmp_path / 'eml'}",
+                f"logfile_output={log_dir}",
+            ]
+        )
+
+        summary = _summary(log_dir)
+        recipient_meta = summary["config"]["address_lists"]["recipient"]
+        assert recipient_meta["file"] == str(address_file)
+        assert recipient_meta["count"] == 2
+        # Metadata only: the addresses themselves must never reach the summary.
+        assert "first@example.com" not in json.dumps(summary)
+
+
+class TestMainOnlineWiring:
+    """main()'s online branch: host resolution and the pre-flight gate."""
+
+    def _argv(self, tmp_path, extra=()):
+        return [
+            "recipient=to@example.com",
+            "port=587",
+            "threads=1",
+            "messages=1",
+            "lb_host=relay.example.com",
+            f"logfile_output={tmp_path / 'logs'}",
+            *extra,
+        ]
+
+    def test_lb_host_skips_dns_and_is_the_host_checked_and_used(self, tmp_path, capsys):
+        with ExitStack() as stack:
+            lookup = stack.enter_context(patch("smtpbench.cli.mx_lookup_all"))
+            banner = stack.enter_context(patch("smtpbench.cli.check_smtp_banner"))
+            stack.enter_context(
+                patch(
+                    "smtpbench.cli.try_send_to_mx_hosts",
+                    return_value=("relay.example.com", None),
+                )
+            )
+            _run_main(self._argv(tmp_path))
+
+        lookup.assert_not_called()  # a fixed relay means no MX lookup
+        assert cli.mx_hosts == ["relay.example.com"]
+        banner.assert_called_once_with("relay.example.com", 587, "starttls", 20)
+
+        stdout = capsys.readouterr().out
+        assert "TLS mode: starttls" in stdout  # 587 resolves to STARTTLS
+        assert "SMTP Hosts Tried: relay.example.com" in stdout
+        assert _summary(tmp_path / "logs")["per_mx"] == {
+            "relay.example.com": {"sent": 1, "failed": 0}
+        }
+
+    def test_banner_failure_aborts_before_any_send(self, tmp_path):
+        log_dir = tmp_path / "logs"
+        with ExitStack() as stack:
+            stack.enter_context(patch("smtpbench.cli.check_smtp_banner", side_effect=SystemExit(1)))
+            sender = stack.enter_context(patch("smtpbench.cli.try_send_to_mx_hosts"))
+            with pytest.raises(SystemExit) as exc:
+                _run_main(self._argv(tmp_path))
+
+        assert exc.value.code == 1
+        sender.assert_not_called()  # fail fast: no messages, no summary
+        assert list(log_dir.glob("summary_*.json")) == []
+
+
+class TestMainGuards:
+    """main()'s argument guards. Every one of these exits 1 before sending."""
+
+    def _argv(self, tmp_path, extra):
+        return [
+            "recipient=to@example.com",
+            "port=587",
+            "threads=1",
+            "messages=1",
+            "lb_host=relay.example.com",  # keeps DNS out of the guard tests
+            f"logfile_output={tmp_path / 'logs'}",
+            *extra,
+        ]
+
+    def test_missing_required_parameters_are_all_reported(self, capsys):
+        with pytest.raises(SystemExit) as exc:
+            _run_main(["recipient=to@example.com"])
+
+        assert exc.value.code == 1
+        stdout = capsys.readouterr().out
+        assert "Missing required parameter(s)" in stdout
+        for key in ("port", "threads", "messages"):
+            assert key in stdout
+
+    def test_missing_recipient_alone_is_reported(self, capsys):
+        with pytest.raises(SystemExit) as exc:
+            _run_main(["port=587", "threads=1", "messages=1"])
+
+        assert exc.value.code == 1
+        assert "recipient" in capsys.readouterr().out
+
+    @pytest.mark.parametrize("pacing", ["delay=1", "random_delay=true"])
+    def test_rate_cannot_be_combined_with_another_pacing_mechanism(self, tmp_path, capsys, pacing):
+        with pytest.raises(SystemExit) as exc:
+            _run_main(self._argv(tmp_path, ["rate=5", pacing]))
+
+        assert exc.value.code == 1
+        assert "rate= cannot be combined" in capsys.readouterr().out
+
+    @pytest.mark.parametrize("value", ["0", "-1", "abc"])
+    def test_rate_must_be_a_positive_number(self, tmp_path, capsys, value):
+        with pytest.raises(SystemExit) as exc:
+            _run_main(self._argv(tmp_path, [f"rate={value}"]))
+
+        assert exc.value.code == 1
+        assert "rate must be a positive number" in capsys.readouterr().out
+
+    def test_recipient_file_without_a_fixed_target_is_rejected(self, tmp_path, capsys):
+        address_file = tmp_path / "recipients.txt"
+        address_file.write_text("first@example.com\n")
+
+        with pytest.raises(SystemExit) as exc:
+            _run_main(
+                [
+                    f"recipient_file={address_file}",
+                    "port=587",
+                    "threads=1",
+                    "messages=1",
+                    f"logfile_output={tmp_path / 'logs'}",
+                ]
+            )
+
+        assert exc.value.code == 1
+        stdout = capsys.readouterr().out
+        assert "Address list configuration error" in stdout
+        # A multi-domain recipient file has no single MX target to resolve.
+        assert "requires lb_host=" in stdout
+
+    def test_unreadable_recipient_file_is_reported_as_a_config_error(self, tmp_path, capsys):
+        # No recipient= here: recipient_file and recipient are mutually
+        # exclusive, and that guard would fire first and mask the missing file.
+        with pytest.raises(SystemExit) as exc:
+            _run_main(
+                [
+                    f"recipient_file={tmp_path / 'does-not-exist.txt'}",
+                    "port=587",
+                    "threads=1",
+                    "messages=1",
+                    "lb_host=relay.example.com",
+                    f"logfile_output={tmp_path / 'logs'}",
+                ]
+            )
+
+        assert exc.value.code == 1
+        assert "Address list configuration error" in capsys.readouterr().out
+
+
+class TestGlobalStateIsolation:
+    """Guards the reset_globals fixture. Keep this class LAST in the file.
+
+    pytest runs tests in declaration order, so a guard only catches pollution
+    from tests declared above it. TestCredentials turns cli.debug_enabled on and
+    TestSendEmailRetryLoop turns cli.journal_enabled on; neither restores it,
+    and before these were added to reset_globals every test that followed ran
+    with that state silently applied.
+    """
+
+    def test_debug_globals_start_clean(self):
+        assert cli.debug_enabled is False
+        assert cli.debug_logger is None
+
+    def test_journal_globals_start_clean(self):
+        assert cli.journal_enabled is False
+        assert cli.journal_address is None
+
+    def test_run_uuid_is_not_the_pinned_one(self):
+        """TestAddressSelectionInSend pins run_uuid to seed the per-message RNG.
+
+        Left in place it would change every later test's random draws, so the
+        fixture restores the import-time value.
+        """
+        assert cli.run_uuid != "fixed-run-uuid"
+
+    def test_counters_and_summary_stores_start_clean(self):
+        assert (cli.success_count, cli.fail_count, cli.retry_count) == (0, 0, 0)
+        assert cli.per_mx_stats == {}
+        assert cli.latency_samples == []
+        assert cli.stop_requested is False
+
+    def test_file_loggers_have_no_leftover_handlers(self):
+        """main() attaches FileHandlers to module-level named loggers."""
+        for name in ("success", "fail", "retry", "debug"):
+            assert logging.getLogger(name).handlers == []
 
 
 if __name__ == "__main__":

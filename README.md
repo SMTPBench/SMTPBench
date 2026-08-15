@@ -25,16 +25,29 @@ A robust SMTP load testing and benchmarking tool with MX failover support and de
 
 ## Features
 
-- 🚀 **Multi-threaded Load Testing** - Simulate concurrent SMTP connections
-- 🔄 **MX Failover** - Automatic MX record lookup with failover to backup servers
+- 🚀 **Multi-threaded Load Testing** - Simulate concurrent SMTP connections; `threads=` workers × `messages=` each, or `messages=0` to run until interrupted
+- 🔄 **MX Failover** - Automatic MX record lookup, tried in priority order with failover to backup servers — or skip DNS entirely with `lb_host=`
+- ✅ **Pre-flight Banner Check** - Verifies the first host answers before sending anything, so an unreachable server fails fast instead of after N threads of errors
+- ♻️ **Retry with Backoff** - `max_retries=` attempts spaced by `retry_delay=`, counted and reported separately from final per-message outcomes
+- ⏱️ **Timeout and Pacing Control** - `transaction_timeout=` per SMTP transaction, plus a fixed `delay=` or `random_delay=` between messages
+- 🎚️ **Whole-run Rate Cap** - `rate=` messages/sec enforced by a token bucket shared across all threads
 - 📊 **Real-time Progress** - Live progress bar with success rate metrics
-- 📝 **Detailed Logging** - Structured JSON logs for success, failures, retries, and debug info
-- 🔒 **TLS/STARTTLS Support** - Secure connection support
-- ⚙️ **Highly Configurable** - Extensive options for timeouts, retries, and delays
-- 🎨 **Color-coded Output** - Easy-to-read terminal output with status colors
-- 📬 **Journal Mode** - Optional message journaling mode
-- 🐛 **Debug Mode** - Detailed debugging for troubleshooting
+- 🎨 **Color-coded Output** - Success rate colored by threshold: green at ≥90%, yellow at ≥70% and <90%, red below 70%
+- 📈 **Summary Artifact** - Machine-readable `summary_*.json` per run with totals, latency percentiles, and per-MX counts
+- 📝 **Detailed Logging** - Structured JSON logs for success, failures, retries, and debug info, written to `logfile_output=` (default `./logs`)
+- 🏷️ **Traceable Messages** - Every message carries `X-SMTPBench-Run-UUID`, `X-SMTPBench-Thread-ID`, and `X-SMTPBench-Message-ID` headers, so delivered mail can be tied back to the exact run and worker that sent it
+- 🔒 **TLS Transport Modes** - `starttls`, implicit `ssl` (port 465), or `none`
+- 🔑 **SMTP AUTH** - Credentials from CLI, environment, or an auto-discovered `.env` file (`dotenv_path=` to override); never written to logs or the summary
+- 🖥️ **Custom HELO/EHLO** - Announce any hostname with `client_hostname=` instead of the system default
+- 📎 **Attachments** - A static file, synthetic payloads of a fixed size or range, or random sampling from a corpus directory — with the estimated total payload printed before sending
+- 📄 **Body-text Corpus** - Prefix each message with a randomly selected text file for realistic content
+- 📇 **Address Lists** - Draw recipient / from / journal addresses from files, randomly or round-robin
+- 💾 **Offline EML Mode** - Compose to `.eml` files on disk instead of sending, for message-format work without a mail server; content-addressed `{sha256}.eml` names mean identical messages deduplicate to one file
+- 📬 **Journal Mode** - `journal=true` adds a second envelope recipient (`journal_address=`, defaulting to the recipient) to exercise compliance-journaling paths — a bcc-style copy, so it never appears in the message headers
+- 🐛 **Debug Mode** - Detailed debugging for troubleshooting, including the SMTP wire conversation — muted around the AUTH exchange so the SASL handshake never reaches your terminal
 - 🐳 **Docker Support** - Run in containers
+
+Every option behind these is listed in [Configuration Options](#configuration-options).
 
 ## Installation
 
@@ -53,7 +66,7 @@ pip install --upgrade smtpbench
 Or specify a version:
 
 ```bash
-pip install smtpbench==1.1.0
+pip install smtpbench==1.2.0
 ```
 
 ### From Source
@@ -67,8 +80,9 @@ pip install -e .
 ### Using Docker
 
 ```bash
-# Build the image
-docker build -t smtpbench .
+# Build the image. The -f is required: the file is named `dockerfile` (lowercase),
+# which Docker will not find by default on case-sensitive filesystems.
+docker build -f dockerfile -t smtpbench .
 
 # Run with log volume mount
 docker run --rm -v $(pwd)/logs:/app/logs smtpbench \
@@ -118,7 +132,7 @@ smtpbench \
     from_address=loadtest@local.lets.qa \
     threads=10 \
     messages=100 \
-    use_tls=true \
+    tls_mode=starttls \
     retry_delay=5 \
     max_retries=3 \
     transaction_timeout=30
@@ -172,16 +186,18 @@ python -m smtpbench recipient=test@local.lets.qa port=587 threads=5 messages=10
 
 ## Configuration Options
 
-For a complete, formatted list of all options with examples, run:
+The tables below are the complete reference — every option SMTPBench accepts appears in one of them. For terminal-formatted usage with worked examples, run:
 ```bash
 smtpbench --help
 ```
+
+> **Note:** `--help` is a quick reference, not an exhaustive one — it currently omits `attachment_dir=` and `attachment_probability=`. These tables are authoritative.
 
 ### Required Parameters
 
 | Parameter | Description | Example |
 |-----------|-------------|---------|
-| `recipient` | Target email address | `test@local.lets.qa` |
+| `recipient` | Target email address — or supply `recipient_file=` instead (see [Address Lists from a File](#address-lists-from-a-file)) | `test@local.lets.qa` |
 | `port` | SMTP port number | `587` or `25` |
 | `threads` | Number of concurrent threads | `10` |
 | `messages` | Messages per thread (0 for infinite) | `100` |
@@ -195,7 +211,7 @@ smtpbench --help
 | `lb_host` | *(auto MX lookup)* | Load balancer/SMTP host (skips MX lookup) |
 | `from_address` | `no-reply@localhost` | Sender email address |
 | `retry_delay` | `20` | Seconds to wait between retries |
-| `use_tls` | `true` | Enable TLS/STARTTLS |
+| `use_tls` | *(unset)* | **Deprecated** — alias for `tls_mode`: `true`→`starttls`, `false`→`none`. Prints a deprecation warning. Beware that `use_tls=true` forces `starttls` even on port 465, where leaving it unset selects `ssl` — so it is not a no-op. Use `tls_mode` instead. |
 | `delay` | `0` | Fixed delay between messages (seconds) |
 | `random_delay` | `false` | Random 1-15 second delay between messages |
 | `transaction_timeout` | `20` | SMTP transaction timeout (seconds) |
@@ -204,6 +220,12 @@ smtpbench --help
 | `logfile_output` | `./logs` | Directory for log files |
 | `journal` | `false` | Enable journal mode |
 | `journal_address` | *(same as recipient)* | Email address for journal copies |
+| `recipient_file` | *(none)* | File of recipient addresses, one per line. Requires `lb_host=` or `eml_out_dir=`. See [Address Lists from a File](#address-lists-from-a-file) |
+| `from_file` | *(none)* | File of From addresses. See [Address Lists from a File](#address-lists-from-a-file) |
+| `journal_file` | *(none)* | File of journal addresses. Requires `journal=true`. See [Address Lists from a File](#address-lists-from-a-file) |
+| `recipient_file_order` | `random` | Selection order for `recipient_file`: `random` or `roundrobin` |
+| `from_file_order` | `random` | Selection order for `from_file`: `random` or `roundrobin` |
+| `journal_file_order` | `random` | Selection order for `journal_file`: `random` or `roundrobin` |
 | `debug` | `false` | Enable debug logging |
 | `attachment_path` | *(none)* | Attach a specific file to every message |
 | `attachment_size` | *(none)* | Generate synthetic attachment(s); accepts a fixed size or range (`512KB`, `10KB-2MB`) |
@@ -266,7 +288,7 @@ smtpbench recipient=test@example.com port=465 threads=5 messages=10 tls_mode=ssl
 smtpbench recipient=test@example.com port=25 threads=5 messages=10 tls_mode=none
 ```
 
-The `use_tls=true/false` flag is a deprecated alias for `tls_mode=starttls/none`.
+The `use_tls=true/false` flag is a deprecated alias for `tls_mode=starttls/none`. It is not equivalent to omitting TLS options: `use_tls=true` resolves to `starttls` unconditionally, so on port 465 it overrides the implicit-`ssl` default. Setting both `tls_mode` and `use_tls` is allowed — `tls_mode` wins and a warning is printed.
 
 ### Rate Limiting
 
@@ -298,6 +320,8 @@ smtpbench \
 - `attachment_size=` also accepts a range, e.g. `10KB-2MB`, to generate variable-sized synthetic attachments
 
 Per-message selection is seeded from the run UUID so results are reproducible.
+
+> **Note:** `attachment_filename=` cannot be combined with `attachment_dir=`. Corpus files keep their own names — renaming every sampled file to one fixed name would defeat the point of sampling a corpus — so SMTPBench rejects the combination rather than silently ignoring one of the two.
 
 ### Body-text Prefix
 
@@ -353,6 +377,8 @@ Supply a plain-text file of addresses for `recipient`, `from_address`, or `journ
 - A `*_file` key **overrides** and **cannot be combined with** its single-value sibling (`recipient`, `from_address`, or `journal_address`).
 - `recipient_file` requires `lb_host=` (a fixed relay) or `eml_out_dir=` (offline mode). MX-based delivery with a multi-domain recipient file is not supported; all recipients are delivered through the one relay.
 - `journal_file` requires `journal=true`.
+- A `*_file_order` key requires its matching `*_file` key. Ordering an address list you never supplied is a mistake rather than a no-op, so SMTPBench rejects it.
+- `journal=true` combined with `recipient_file=` requires an explicit `journal_address=` or `journal_file=`. Journaling normally falls back to the single `recipient`, and there isn't one in that combination, so SMTPBench fails fast rather than journaling nowhere.
 
 **File format:**
 
@@ -414,9 +440,16 @@ SMTPBench creates structured JSON logs in the specified log directory:
       "source": "generated"
     }
   ],
+  "body_source": null,
+  "from_used": "loadtest@local.lets.qa",
+  "journal_used": null,
   "error": null
 }
 ```
+
+- `body_source` — the filename and character length of the body-text excerpt when `body_text_dir=` is in use, otherwise `null`. The excerpt text itself is never logged.
+- `from_used` / `journal_used` — the addresses actually selected for this message, which matter when `from_file=` / `journal_file=` are drawing from a list.
+- `attachments` carries metadata only; attachment bytes are never written to logs.
 
 ### Summary Artifact
 
@@ -434,7 +467,14 @@ After every run, SMTPBench writes a `summary_{timestamp}_{uuid}.json` file to th
     "rate": null,
     "tls_mode": "starttls",
     "auth": false,
-    "port": 587
+    "port": 587,
+    "offline": false,
+    "body_text_dir": false,
+    "address_lists": {
+      "recipient": null,
+      "from": {"file": "senders.txt", "count": 250, "order": "random"},
+      "journal": null
+    }
   },
   "totals": {
     "sent": 495,
@@ -453,6 +493,13 @@ After every run, SMTPBench writes a `summary_{timestamp}_{uuid}.json` file to th
   }
 }
 ```
+
+A few things worth knowing about these numbers:
+
+- **`totals.sent` and `totals.failed` are per-message final outcomes**, so they add up to the number of messages attempted. **`totals.retried` counts retry *attempts*** and is reported separately — it is not part of that sum. A message that failed twice and then succeeded contributes `1` to `sent` and `2` to `retried`, not `2` to `failed`.
+- **`config.auth` is a boolean**, not a username. Credentials never appear in the summary, the logs, or debug output.
+- **`config.address_lists` records file path, address count, and order only** — never the addresses themselves.
+- `latency_ms` is computed from successful sends only, and is **`null`** when nothing succeeded — hence the `(d['latency_ms'] or {})` guard in the CI example below.
 
 Use the summary file to gate CI pipelines on latency budgets:
 
@@ -547,7 +594,7 @@ X-SMTPBench-Run-UUID: f9e8d7c6-b5a4-3210-fedc-ba9876543210  ← Different run
 
 ### Terminal Output
 
-SMTPBench displays real-time progress with color-coded success rates:
+SMTPBench displays real-time progress with a success rate colored by threshold — **green at ≥90%, yellow at ≥70% and <90%, red below 70%** — so a degrading run is visible without reading the numbers:
 
 ```
 [INFO] Run UUID: a1b2c3d4-e5f6-7890-abcd-ef1234567890
@@ -568,7 +615,10 @@ Total Failed: 13
 Total Retried: 8
 Elapsed Time: 135.42 seconds
 Logs saved in: /path/to/logs
+Summary written to: /path/to/logs/summary_2026-08-04_10-30-00_a1b2c3d4-....json
 ```
+
+In offline mode (`eml_out_dir=`) the host line reads `SMTP Hosts Tried: (offline — wrote EML files)`, and no MX lookup or banner check is printed.
 
 ## Use Cases (adjust samples for your needs)
 
@@ -632,7 +682,7 @@ smtpbench \
     from_address=loadtest@local.lets.qa \
     threads=100 \
     messages=1000 \
-    use_tls=true \
+    tls_mode=starttls \
     retry_delay=10 \
     max_retries=5 \
     transaction_timeout=30 \
@@ -646,6 +696,7 @@ smtpbench \
   - `dnspython>=2.0.0`
   - `tqdm>=4.0.0`
   - `colorama>=0.4.0`
+  - `python-dotenv>=1.0.0`
 
 ## Development
 
@@ -657,7 +708,9 @@ cd SMTPBench
 pip install -e ".[dev]"
 ```
 
-This installs the runtime dependencies plus the dev tools (`pytest` and `ruff`).
+This installs the runtime dependencies plus the dev tools (`pytest`, `pytest-cov`, and `ruff`).
+
+> **Note:** `ruff` is pinned to an exact version (`ruff==0.16.1`) so local formatting matches CI byte for byte. Formatter output changes between Ruff releases, and an unpinned install would produce spurious `ruff format --check` failures.
 
 ### Linting and Formatting
 
@@ -715,12 +768,20 @@ pytest -v
 
 ### CI/CD
 
-Checks run automatically on pull requests via GitHub Actions:
+Checks run automatically on pull requests:
 - **Lint** - Ruff lint and format checks
 - **Unit tests** - Fast tests without external dependencies
 - **Integration tests** - Full end-to-end tests with Docker Compose
+- **Coverage** - Combines the unit and integration coverage data (`coverage combine`) and enforces a floor; per-suite numbers are also reported for visibility
+- **CodeQL** - Static analysis via GitHub code scanning
 
-See `.github/workflows/pytest.yml` for details.
+See `.github/workflows/pytest.yml` for the lint, test, and coverage jobs. CodeQL runs from GitHub's default code-scanning setup rather than a workflow file in this repository.
+
+#### Coverage locally
+
+```bash
+pytest -m "not integration" --cov=smtpbench --cov-report=term-missing
+```
 
 ## Troubleshooting
 
