@@ -42,24 +42,30 @@ export TWINE_PASSWORD=pypi-YOUR_TOKEN_HERE
 
 ### Option 2: Configuration File
 
-Copy the example config:
+Create `~/.pypirc` with your tokens and lock down its permissions:
 
 ```bash
-cp .pypirc.example ~/.pypirc
+touch ~/.pypirc
 chmod 600 ~/.pypirc
 ```
 
-Edit `~/.pypirc` and add your tokens:
-
 ```ini
+[distutils]
+index-servers =
+    pypi
+    testpypi
+
 [pypi]
 username = __token__
 password = pypi-YOUR_PRODUCTION_TOKEN_HERE
 
 [testpypi]
+repository = https://test.pypi.org/legacy/
 username = __token__
 password = pypi-YOUR_TEST_TOKEN_HERE
 ```
+
+Create tokens at [pypi.org](https://pypi.org/manage/account/token/) and [test.pypi.org](https://test.pypi.org/manage/account/token/).
 
 ## Manual Deployment
 
