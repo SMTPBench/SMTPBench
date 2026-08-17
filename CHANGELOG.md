@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+- **`port=` is no longer required in offline mode.** A run with `eml_out_dir=` never opens a connection, so demanding a port asked for a value that could not be used. `port=` is still accepted offline (and reported in the summary); when omitted, the summary records `"port": null`. The missing-parameter help no longer lists `port` for offline runs.
+
 ## [1.2.0] - 2026-08-04
 
 ### Added

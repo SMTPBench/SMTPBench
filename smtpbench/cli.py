@@ -87,7 +87,7 @@ def show_help():
 
 {Fore.GREEN}REQUIRED PARAMETERS:{Style.RESET_ALL}
     {Fore.YELLOW}recipient{Style.RESET_ALL}=EMAIL          Target email address (or use recipient_file= below)
-    {Fore.YELLOW}port{Style.RESET_ALL}=NUMBER              SMTP port (25, 587, 465, etc.)
+    {Fore.YELLOW}port{Style.RESET_ALL}=NUMBER              SMTP port (25, 587, 465, etc.) — not required with eml_out_dir=
     {Fore.YELLOW}threads{Style.RESET_ALL}=NUMBER           Number of concurrent threads
     {Fore.YELLOW}messages{Style.RESET_ALL}=NUMBER          Messages per thread (0 for infinite)
 
@@ -1264,7 +1264,12 @@ def main():
     args = parse_args()
     load_dotenv(dotenv_path=args.get("dotenv_path"))
 
-    required = ["port", "threads", "messages"]
+    # Resolved before the required-parameter check: an offline run never opens a
+    # connection, so port= has nothing to apply to and must not be demanded.
+    eml_out_dir = args.get("eml_out_dir")
+    offline_mode = eml_out_dir is not None
+
+    required = ["threads", "messages"] if offline_mode else ["port", "threads", "messages"]
     missing = [key for key in required if key not in args]
     if "recipient" not in args and "recipient_file" not in args:
         missing.append("recipient")
@@ -1274,7 +1279,8 @@ def main():
         )
         print(f"{Fore.YELLOW}Required parameters:{Style.RESET_ALL}")
         print("  • recipient=EMAIL     - Target email address")
-        print("  • port=NUMBER         - SMTP port (25, 587, 465, etc.)")
+        if not offline_mode:
+            print("  • port=NUMBER         - SMTP port (25, 587, 465, etc.)")
         print("  • threads=NUMBER      - Number of concurrent threads")
         print("  • messages=NUMBER     - Messages per thread (0 for infinite)")
         print(f"\n{Fore.CYAN}Example:{Style.RESET_ALL}")
@@ -1287,8 +1293,6 @@ def main():
 
     recipient = args.get("recipient")
     lb_host = args.get("lb_host")
-    eml_out_dir = args.get("eml_out_dir")
-    offline_mode = eml_out_dir is not None
 
     try:
         validate_address_list_args(args, offline_mode)
@@ -1307,7 +1311,7 @@ def main():
     else:
         mx_hosts = mx_lookup_all(recipient)
 
-    port = int(args["port"])
+    port = int(args["port"]) if "port" in args else None
     from_address = args.get("from_address", "no-reply@localhost")
     threads_count = int(args["threads"])
     messages_per_thread = int(args["messages"])

@@ -1856,6 +1856,53 @@ class TestMainOffline:
         # Metadata only: the addresses themselves must never reach the summary.
         assert "first@example.com" not in json.dumps(summary)
 
+    def test_port_is_not_required_offline(self, tmp_path):
+        """Offline runs never connect, so port= must not be a required parameter."""
+        eml_dir = tmp_path / "eml"
+        log_dir = tmp_path / "logs"
+
+        _run_main(
+            [
+                "recipient=to@example.com",
+                "threads=1",
+                "messages=2",
+                f"eml_out_dir={eml_dir}",
+                f"logfile_output={log_dir}",
+            ]
+        )
+
+        assert len(list(eml_dir.glob("*.eml"))) == 2
+        # No connection was made, so there is no port to report.
+        assert _summary(log_dir)["config"]["port"] is None
+
+    def test_port_is_still_recorded_offline_when_supplied(self, tmp_path):
+        """port= stays accepted offline; it is reported but never used."""
+        log_dir = tmp_path / "logs"
+
+        _run_main(
+            [
+                "recipient=to@example.com",
+                "port=587",
+                "threads=1",
+                "messages=1",
+                f"eml_out_dir={tmp_path / 'eml'}",
+                f"logfile_output={log_dir}",
+            ]
+        )
+
+        assert _summary(log_dir)["config"]["port"] == 587
+
+    def test_offline_missing_parameter_message_does_not_demand_port(self, tmp_path, capsys):
+        """The required-parameter help must not list port for a run that cannot use it."""
+        with pytest.raises(SystemExit) as exc:
+            _run_main([f"eml_out_dir={tmp_path / 'eml'}", "recipient=to@example.com"])
+
+        assert exc.value.code == 1
+        stdout = capsys.readouterr().out
+        assert "threads" in stdout
+        assert "messages" in stdout
+        assert "• port=NUMBER" not in stdout
+
 
 class TestMainOnlineWiring:
     """main()'s online branch: host resolution and the pre-flight gate."""

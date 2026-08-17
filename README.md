@@ -198,7 +198,7 @@ smtpbench --help
 | Parameter | Description | Example |
 |-----------|-------------|---------|
 | `recipient` | Target email address — or supply `recipient_file=` instead (see [Address Lists from a File](#address-lists-from-a-file)) | `test@local.lets.qa` |
-| `port` | SMTP port number | `587` or `25` |
+| `port` | SMTP port number — **not required** when `eml_out_dir=` is set, since an offline run never connects (see [Offline EML Output](#offline-eml-output)) | `587` or `25` |
 | `threads` | Number of concurrent threads | `10` |
 | `messages` | Messages per thread (0 for infinite) | `100` |
 
@@ -348,7 +348,6 @@ Write composed messages to disk as `.eml` files instead of sending over SMTP:
 ```bash
 smtpbench \
     recipient=test@example.com \
-    port=587 \
     threads=5 \
     messages=20 \
     eml_out_dir=./eml-output
@@ -356,6 +355,7 @@ smtpbench \
 
 - `eml_out_dir=PATH` — directory to write `{sha256}.eml` files into
 - Fully offline: no DNS/MX lookup and no banner check are performed; the recipient is used only as a message header
+- `port=` is not required here and has nothing to apply to. It is still accepted; if omitted, the summary records `"port": null`
 - Identical message bytes (same subject, body, attachments) deduplicate to a single file via SHA-256 naming
 - Composes correctly with `attachment_*` options and `body_text_dir=` — all composition happens before the offline fork
 
