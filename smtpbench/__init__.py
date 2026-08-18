@@ -1,6 +1,6 @@
 """SMTPBench - SMTP Load Testing and Benchmarking Tool"""
 
-__version__ = "1.2.0"
+__version__ = "1.2.1"
 __author__ = "Randall Morse"
 __email__ = "rmorse@lets.qa"
 

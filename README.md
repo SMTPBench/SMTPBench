@@ -66,7 +66,7 @@ pip install --upgrade smtpbench
 Or specify a version:
 
 ```bash
-pip install smtpbench==1.2.0
+pip install smtpbench==1.2.1
 ```
 
 ### From Source
@@ -691,7 +691,7 @@ smtpbench \
 
 ## Requirements
 
-- Python 3.9 or higher
+- Python 3.9 or higher — CI runs the unit suite on 3.9, 3.10, 3.11, 3.12, 3.13, and 3.14
 - Dependencies (automatically installed):
   - `dnspython>=2.0.0`
   - `tqdm>=4.0.0`

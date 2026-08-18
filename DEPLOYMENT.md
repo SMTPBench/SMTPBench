@@ -145,9 +145,19 @@ Before each release, update the version number:
 3. **Major release** (breaking changes): `1.1.0` → `2.0.0`
 
 Update in:
-- `pyproject.toml` (line 7)
-- `smtpbench/__init__.py` (line 3)
+- `pyproject.toml` (`version`) — `deploy.sh` aborts if this and `__version__` disagree
+- `smtpbench/__init__.py` (`__version__`)
 - `CHANGELOG.md` (add new version section)
+- `README.md` — the pinned `pip install smtpbench==X.Y.Z` example
+- `SECURITY.md` — add the new minor series to the Supported Versions table
+- `docs/releases/X.Y.Z.md` — release notes for the new version
+
+Verify the two that matter with:
+
+```bash
+grep -n '^version' pyproject.toml
+grep -n '__version__' smtpbench/__init__.py
+```
 
 ## Troubleshooting
 

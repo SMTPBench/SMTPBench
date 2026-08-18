@@ -5,10 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.2.1] - 2026-08-17
 
 ### Fixed
 - **`port=` is no longer required in offline mode.** A run with `eml_out_dir=` never opens a connection, so demanding a port asked for a value that could not be used. `port=` is still accepted offline (and reported in the summary); when omitted, the summary records `"port": null`. The missing-parameter help no longer lists `port` for offline runs.
+
+### Removed
+- **`.pypirc.example`**, which only restated the `~/.pypirc` template that `DEPLOYMENT.md` already inlines. The two details the doc was missing (the `[distutils] index-servers` block and TestPyPI's `repository` URL) moved into `DEPLOYMENT.md`. Packaging and runtime behavior are unaffected.
+
+### Added
+- **Python 3.13 and 3.14 are now declared supported.** `requires-python = ">=3.9"` already permitted them and the suite passes on both; only the PyPI classifiers were stale. CI's unit-test job now runs as a matrix across 3.9–3.14 so the classifiers are backed by evidence rather than assertion. The integration job stays on 3.11 (it is gated by Docker, not by interpreter version).
+
+### Changed
+- Ruff's `target-version` moved from `py38` to `py39`, matching the `requires-python` floor the project actually declares.
+
+### Documentation
+- `--help`, the README required-parameter table, and the Offline EML Output section all record that `port=` is not needed with `eml_out_dir=`. The README's offline example no longer passes an unused `port=`.
+- The README's Requirements section names the interpreter versions CI actually exercises.
+- `SECURITY.md` now lists `1.2.x` as a supported version.
+- `DEPLOYMENT.md`'s version-bump checklist names every file that carries the version, not just three.
 
 ## [1.2.0] - 2026-08-04
 
