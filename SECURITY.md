@@ -6,6 +6,7 @@ We actively support the following versions of SMTPBench with security updates:
 
 | Version | Supported          |
 | ------- | ------------------ |
+| 1.2.x   | :white_check_mark: |
 | 1.1.x   | :white_check_mark: |
 | 1.0.x   | :white_check_mark: |
 | < 1.0   | :x:                |
@@ -114,4 +115,4 @@ We appreciate the security research community's efforts in keeping SMTPBench sec
 
 ---
 
-Last updated: 2025-11-18
+Last updated: 2026-08-17

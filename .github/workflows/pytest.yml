@@ -28,6 +28,13 @@ jobs:
 
   unit-tests:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # Every version `requires-python = ">=3.9"` claims to support. The
+        # classifiers in pyproject.toml are only honest if this matrix is green.
+        python-version: ['3.9', '3.10', '3.11', '3.12', '3.13', '3.14']
+    name: unit-tests (py${{ matrix.python-version }})
     steps:
       - uses: actions/checkout@v4
         with:
@@ -35,7 +42,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: ${{ matrix.python-version }}
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
@@ -47,7 +54,11 @@ jobs:
           # the coverage job. `coverage combine` merges any `.coverage.*` file.
           COVERAGE_FILE: .coverage.unit
         run: pytest -v -m "not integration" --cov=smtpbench --cov-report= --cov-fail-under=0
+      # Only the primary interpreter's data feeds the coverage gate. All matrix
+      # legs run the same tests over the same lines, so uploading each one would
+      # just collide on the artifact name for no added signal.
       - name: Upload unit coverage data
+        if: matrix.python-version == '3.11'
         uses: actions/upload-artifact@v4
         with:
           name: coverage-unit

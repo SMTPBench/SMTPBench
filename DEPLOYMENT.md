@@ -42,24 +42,30 @@ export TWINE_PASSWORD=pypi-YOUR_TOKEN_HERE
 
 ### Option 2: Configuration File
 
-Copy the example config:
+Create `~/.pypirc` with your tokens and lock down its permissions:
 
 ```bash
-cp .pypirc.example ~/.pypirc
+touch ~/.pypirc
 chmod 600 ~/.pypirc
 ```
 
-Edit `~/.pypirc` and add your tokens:
-
 ```ini
+[distutils]
+index-servers =
+    pypi
+    testpypi
+
 [pypi]
 username = __token__
 password = pypi-YOUR_PRODUCTION_TOKEN_HERE
 
 [testpypi]
+repository = https://test.pypi.org/legacy/
 username = __token__
 password = pypi-YOUR_TEST_TOKEN_HERE
 ```
+
+Create tokens at [pypi.org](https://pypi.org/manage/account/token/) and [test.pypi.org](https://test.pypi.org/manage/account/token/).
 
 ## Manual Deployment
 
@@ -139,9 +145,26 @@ Before each release, update the version number:
 3. **Major release** (breaking changes): `1.1.0` → `2.0.0`
 
 Update in:
-- `pyproject.toml` (line 7)
-- `smtpbench/__init__.py` (line 3)
+- `pyproject.toml` (`version`) — `deploy.sh` aborts if this and `__version__` disagree
+- `smtpbench/__init__.py` (`__version__`)
 - `CHANGELOG.md` (add new version section)
+- `README.md` — the pinned `pip install smtpbench==X.Y.Z` example
+- `SECURITY.md` — add the new minor series to the Supported Versions table
+- `docs/releases/X.Y.Z.md` — release notes for the new version
+
+Verify the two that `deploy.sh` enforces actually agree — this exits non-zero on
+mismatch rather than leaving you to eyeball two numbers:
+
+```bash
+project_version="$(sed -nE 's/^version = "([^"]+)"/\1/p' pyproject.toml)"
+package_version="$(sed -nE 's/^__version__ = "([^"]+)"/\1/p' smtpbench/__init__.py)"
+if [ -n "$project_version" ] && [ "$project_version" = "$package_version" ]; then
+    echo "✓ version lockstep: $project_version"
+else
+    echo "✗ mismatch: pyproject=$project_version __init__=$package_version" >&2
+    exit 1
+fi
+```
 
 ## Troubleshooting
 
@@ -187,4 +210,4 @@ For deployment issues:
 
 ---
 
-Last updated: 2025-11-18
+Last updated: 2026-08-17
