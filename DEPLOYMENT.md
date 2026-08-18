@@ -152,11 +152,18 @@ Update in:
 - `SECURITY.md` — add the new minor series to the Supported Versions table
 - `docs/releases/X.Y.Z.md` — release notes for the new version
 
-Verify the two that matter with:
+Verify the two that `deploy.sh` enforces actually agree — this exits non-zero on
+mismatch rather than leaving you to eyeball two numbers:
 
 ```bash
-grep -n '^version' pyproject.toml
-grep -n '__version__' smtpbench/__init__.py
+project_version="$(sed -nE 's/^version = "([^"]+)"/\1/p' pyproject.toml)"
+package_version="$(sed -nE 's/^__version__ = "([^"]+)"/\1/p' smtpbench/__init__.py)"
+if [ -n "$project_version" ] && [ "$project_version" = "$package_version" ]; then
+    echo "✓ version lockstep: $project_version"
+else
+    echo "✗ mismatch: pyproject=$project_version __init__=$package_version" >&2
+    exit 1
+fi
 ```
 
 ## Troubleshooting
@@ -203,4 +210,4 @@ For deployment issues:
 
 ---
 
-Last updated: 2025-11-18
+Last updated: 2026-08-17

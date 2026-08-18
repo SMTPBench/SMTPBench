@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [1.2.1] - 2026-08-17
 
 ### Fixed
+- **A bare `eml_out_dir=` now reports a configuration error** instead of enabling offline mode and dying in `os.makedirs("")` with an unhandled `FileNotFoundError`. Whitespace-only paths are rejected too.
 - **`port=` is no longer required in offline mode.** A run with `eml_out_dir=` never opens a connection, so demanding a port asked for a value that could not be used. `port=` is still accepted offline (and reported in the summary); when omitted, the summary records `"port": null`. The missing-parameter help no longer lists `port` for offline runs.
 
 ### Removed

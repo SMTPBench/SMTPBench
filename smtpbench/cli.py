@@ -1267,6 +1267,11 @@ def main():
     # Resolved before the required-parameter check: an offline run never opens a
     # connection, so port= has nothing to apply to and must not be demanded.
     eml_out_dir = args.get("eml_out_dir")
+    if eml_out_dir is not None and not eml_out_dir.strip():
+        # A bare `eml_out_dir=` would otherwise enable offline mode and then fail
+        # deep in os.makedirs("") with an unhandled FileNotFoundError.
+        print(f"{Fore.RED}✗ eml_out_dir= requires a non-empty directory path.{Style.RESET_ALL}")
+        sys.exit(1)
     offline_mode = eml_out_dir is not None
 
     required = ["threads", "messages"] if offline_mode else ["port", "threads", "messages"]

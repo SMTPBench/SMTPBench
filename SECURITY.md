@@ -115,4 +115,4 @@ We appreciate the security research community's efforts in keeping SMTPBench sec
 
 ---
 
-Last updated: 2025-11-18
+Last updated: 2026-08-17

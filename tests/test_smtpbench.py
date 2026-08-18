@@ -1903,6 +1903,22 @@ class TestMainOffline:
         assert "messages" in stdout
         assert "• port=NUMBER" not in stdout
 
+    @pytest.mark.parametrize("value", ["", "   "])
+    def test_empty_eml_out_dir_is_a_configuration_error(self, value, capsys):
+        """A bare eml_out_dir= must not reach os.makedirs("") and traceback."""
+        with pytest.raises(SystemExit) as exc:
+            _run_main(
+                [
+                    "recipient=to@example.com",
+                    "threads=1",
+                    "messages=1",
+                    f"eml_out_dir={value}",
+                ]
+            )
+
+        assert exc.value.code == 1
+        assert "eml_out_dir= requires a non-empty directory path" in capsys.readouterr().out
+
 
 class TestMainOnlineWiring:
     """main()'s online branch: host resolution and the pre-flight gate."""
