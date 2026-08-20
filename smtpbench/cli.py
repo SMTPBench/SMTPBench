@@ -12,6 +12,8 @@ import sys
 import threading
 import time
 import traceback
+import urllib.error
+import urllib.request
 import uuid
 from datetime import datetime
 from email import encoders
@@ -166,6 +168,21 @@ def show_help():
     • JSON logs: success, fail, retry, debug (when enabled)
     • Each email includes X-SMTPBench-Run-UUID header for tracking
 
+{Fore.GREEN}UPGRADING:{Style.RESET_ALL}
+    {Fore.CYAN}# Compare the installed version against PyPI{Style.RESET_ALL}
+    smtpbench --check-updates
+
+    {Fore.CYAN}# Upgrade to the latest release{Style.RESET_ALL}
+    pip install --upgrade smtpbench
+
+    Depending on how SMTPBench was installed, use instead:
+      pipx upgrade smtpbench
+      uv tool upgrade smtpbench
+      docker pull smtpbench/smtpbench:latest
+
+    SMTPBench never contacts PyPI on its own. The version check runs only when
+    you ask for it, and it never installs anything.
+
 {Fore.GREEN}MORE INFORMATION:{Style.RESET_ALL}
     GitHub:        {Fore.BLUE}https://github.com/SMTPBench/SMTPBench{Style.RESET_ALL}
     Documentation: https://github.com/SMTPBench/SMTPBench#readme
@@ -178,14 +195,113 @@ def show_help():
     sys.exit(0)
 
 
+PYPI_JSON_URL = "https://pypi.org/pypi/smtpbench/json"
+UPDATE_CHECK_TIMEOUT = 5
+
+
+def _version_tuple(value):
+    """Convert a version string to a comparable tuple.
+
+    Only the numeric release segments are compared. A trailing suffix such as
+    ``rc1`` sorts below the same release without it, which is the behaviour
+    people expect from a pre-release.
+    """
+    release, _, suffix = value.partition("-")
+    parts = []
+    for chunk in release.split("."):
+        digits = ""
+        for char in chunk:
+            if not char.isdigit():
+                break
+            digits += char
+        parts.append(int(digits) if digits else 0)
+        if digits != chunk:
+            suffix = chunk[len(digits) :] + suffix
+    return (tuple(parts), 0 if suffix else 1)
+
+
+def fetch_latest_version(timeout=UPDATE_CHECK_TIMEOUT):
+    """Return the latest version published on PyPI, or None if it cannot be read.
+
+    Never raises. A machine with no outbound network, a proxy in the way, or a
+    PyPI outage should not turn into a traceback.
+    """
+    try:
+        request = urllib.request.Request(
+            PYPI_JSON_URL,
+            headers={"User-Agent": f"smtpbench/{__version__}"},
+        )
+        with urllib.request.urlopen(request, timeout=timeout) as response:  # noqa: S310
+            payload = json.loads(response.read().decode("utf-8"))
+        latest = payload.get("info", {}).get("version")
+        return latest if isinstance(latest, str) and latest else None
+    except (urllib.error.URLError, TimeoutError, ValueError, KeyError, OSError):
+        return None
+
+
+def show_update_check():
+    """Compare the installed version against PyPI and print how to upgrade.
+
+    Only ever runs when explicitly asked for. SMTPBench does not contact PyPI,
+    or anything else, during a normal run.
+    """
+    print(f"{Fore.CYAN}SMTPBench{Style.RESET_ALL} {__version__} installed")
+    print(f"{Fore.WHITE}Checking PyPI for a newer release...{Style.RESET_ALL}")
+
+    latest = fetch_latest_version()
+
+    if latest is None:
+        print(
+            f"{Fore.YELLOW}Could not reach PyPI.{Style.RESET_ALL} "
+            "Check your network or proxy settings, or see releases at"
+        )
+        print(f"{Fore.BLUE}https://pypi.org/project/smtpbench/{Style.RESET_ALL}")
+        sys.exit(2)
+
+    installed_key = _version_tuple(__version__)
+    latest_key = _version_tuple(latest)
+
+    if latest_key > installed_key:
+        print(f"{Fore.YELLOW}Update available: {latest}{Style.RESET_ALL}\n")
+        print(f"{Fore.GREEN}Upgrade with:{Style.RESET_ALL}")
+        print("    pip install --upgrade smtpbench")
+        print("\nOr, depending on how it was installed:")
+        print("    pipx upgrade smtpbench")
+        print("    uv tool upgrade smtpbench")
+        print("    docker pull smtpbench/smtpbench:latest")
+        print(
+            f"\n{Fore.CYAN}Changelog:{Style.RESET_ALL} "
+            "https://github.com/SMTPBench/SMTPBench/blob/main/CHANGELOG.md"
+        )
+    elif latest_key < installed_key:
+        print(
+            f"{Fore.GREEN}Installed version is ahead of PyPI{Style.RESET_ALL} "
+            f"(latest published: {latest})"
+        )
+    else:
+        print(f"{Fore.GREEN}Up to date.{Style.RESET_ALL} {latest} is the latest release.")
+
+    sys.exit(0)
+
+
 def parse_args():
     """Parse key=value style arguments into a dictionary."""
+    # Check for update flag. Explicit only: a normal run never contacts PyPI.
+    if any(
+        arg.lower() in ["--check-updates", "--check-update", "check-updates"]
+        for arg in sys.argv[1:]
+    ):
+        show_update_check()
+
     # Check for version flag
     if any(arg.lower() in ["-v", "--version", "version"] for arg in sys.argv[1:]):
         print(
             f"{Fore.CYAN}SMTPBench{Style.RESET_ALL} version {Fore.YELLOW}{__version__}{Style.RESET_ALL}"
         )
         print(f"{Fore.BLUE}https://github.com/SMTPBench/SMTPBench{Style.RESET_ALL}")
+        print(
+            f"{Fore.WHITE}Run 'smtpbench --check-updates' to compare against PyPI.{Style.RESET_ALL}"
+        )
         sys.exit(0)
 
     # Check for help flags
